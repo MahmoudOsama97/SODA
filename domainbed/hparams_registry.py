@@ -200,6 +200,28 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
         _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
 
+    elif algorithm == "OT_GW_EMAPivotAlign":
+        # --- Core EMA Pivot Hyperparameters ---
+        # Momentum for the EMA update of the pivot. Higher values mean a more stable target.
+        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
+
+        # Size (number of feature vectors) of the synthetic pivot domain.
+        # This depends on available GPU memory.
+        _hparam("ema_pivot_size", 128, lambda r: int(r.choice([128, 256])))
+
+        # --- Optimal Transport Hyperparameters ---
+
+        # Regularization strength for the Sinkhorn algorithm (passed as 'reg' to ot.sinkhorn2).
+        # Controls the smoothness of the OT plan.
+        _hparam("ot_reg", 0.1, lambda r: r.choice([0.05, 0.1, 0.5]))
+        
+        # --- Standard Loss Weight ---
+        
+        # Weight for the standard classification loss (usually fixed at 1.0).
+        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
+        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
+
+
     elif algorithm == "OT_EMAPivot_Confident":
         # --- Core EMA Pivot Hyperparameters ---
 
@@ -423,7 +445,7 @@ def _hparams(algorithm, dataset, random_seed):
     elif dataset == 'DomainNet':
         _hparam('batch_size', 32, lambda r: int(2**r.uniform(3, 5)))
     else:
-        _hparam("batch_size", 32, lambda r: 32)
+        _hparam('batch_size', 32, lambda r: int(2**r.uniform(5, 6)))
 
     if algorithm in ['DANN', 'CDANN'] and dataset in SMALL_IMAGES:
         _hparam('lr_g', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))

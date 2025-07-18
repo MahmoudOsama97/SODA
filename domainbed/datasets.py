@@ -53,46 +53,6 @@ def num_environments(dataset_name):
     return len(get_dataset_class(dataset_name).ENVIRONMENTS)
 
 
-class YourCustomSSLDataset(Dataset): # You should inherit from the base DomainBed dataset
-    """
-    A custom dataset wrapper that takes a standard dataset and adds the
-    self-supervised rotation task on the fly.
-    """
-    def __init__(self, underlying_dataset):
-        self.underlying_dataset = underlying_dataset
-        # The transform should already be part of the underlying dataset
-        self.transform = self.underlying_dataset.transform
-
-    def __len__(self):
-        return len(self.underlying_dataset)
-
-    def __getitem__(self, index):
-        # Get the original PIL image and label from the dataset being wrapped
-        original_pil_img, original_label = self.underlying_dataset.get_pil_sample(index) # Assume a method like this exists
-        
-        # Apply the standard transforms to get the original tensor (x)
-        x = self.transform(original_pil_img)
-        y = original_label
-
-        # --- Create the Rotated Version for SSL ---
-        # Choose a random rotation angle
-        rot_angle_choice = random.choice([0, 90, 180, 270])
-        
-        # Rotate the original PIL image
-        rotated_pil_img = TF.rotate(original_pil_img, rot_angle_choice)
-        
-        # Apply the same standard transforms to the rotated image to get (xr)
-        xr = self.transform(rotated_pil_img)
-        
-        # Create the corresponding rotation label (yr)
-        if rot_angle_choice == 0:   yr = 0
-        elif rot_angle_choice == 90:  yr = 1
-        elif rot_angle_choice == 180: yr = 2
-        else:                         yr = 3
-        
-        # Return the four items your algorithm expects
-        return x, y, torch.tensor(xr), torch.tensor(yr)
-
 class MultipleDomainDataset:
     N_STEPS = 5001           # Default, subclasses may override
     CHECKPOINT_FREQ = 100    # Default, subclasses may override
@@ -226,22 +186,25 @@ class RotatedMNIST(MultipleEnvironmentMNIST):
 
 
 # ==============================================================================
-# === THE CRITICAL FIX IS HERE =================================================
+# === THE PARENT CLASS MUST BE MODIFIED TO ACCEPT A PRE-FILTERED LIST =========
 # ==============================================================================
 
 class MultipleEnvironmentImageFolder(MultipleDomainDataset):
-    # ADD `environments_to_load=None` to the constructor
+    # ADD `environments_to_load=None` to the constructor's signature
     def __init__(self, root, test_envs, augment, hparams, environments_to_load=None):
         super().__init__()
 
         # IF a specific list of environments is provided, USE IT.
         if environments_to_load is not None:
             environments = environments_to_load
+            print(f"Loading a custom, pre-filtered set of {len(environments)} environments.")
         # OTHERWISE, fall back to the original behavior (scanning the directory).
         else:
             environments = [f.name for f in os.scandir(root) if f.is_dir()]
             environments = sorted(environments)
+            print(f"Discovered {len(environments)} environments by scanning directory.")
 
+        # The rest of the original __init__ method remains the same
         transform = transforms.Compose([
             transforms.Resize((224,224)),
             transforms.ToTensor(),
@@ -272,28 +235,74 @@ class MultipleEnvironmentImageFolder(MultipleDomainDataset):
         self.num_classes = len(self.datasets[-1].classes)
 
 # ==============================================================================
-# === NOW UPDATE ALL CHILD CLASSES TO USE THE NEW FEATURE ======================
+# === THE CHILD CLASSES NOW IMPLEMENT YOUR PRECISE PRUNING LOGIC ===============
 # ==============================================================================
+
+class OfficeHome(MultipleEnvironmentImageFolder):
+    CHECKPOINT_FREQ = 300
+    ENVIRONMENTS = ["A", "C", "P", "R"]
+    FULL_ENV_NAMES = ["Art", "Clipart", "Product", "Real World"]
+
+    def __init__(self, root, test_envs, hparams):
+        self.dir = os.path.join(root, "office_home/")
+        all_folders_in_dir = sorted([d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))])
+        is_synthetic_setting = any("zSynDomain" in folder for folder in all_folders_in_dir)
+
+        if is_synthetic_setting:
+            test_env_index = test_envs[0]
+            test_domain_name = self.FULL_ENV_NAMES[test_env_index]
+
+            # Logic: Load all original domains + only synthetic domains that are NOT related to the test domain.
+            domains_to_load = []
+            for folder in all_folders_in_dir:
+                is_original = folder in self.FULL_ENV_NAMES
+                is_unrelated_synthetic = "zSynDomain" in folder and test_domain_name not in folder
+                if is_original or is_unrelated_synthetic:
+                    domains_to_load.append(folder)
+            
+            # Find the new index of the test domain within this pruned list.
+            final_test_envs = [domains_to_load.index(test_domain_name)]
+            
+            print(f"--- Activating PRUNED synthetic data mode for OfficeHome ---")
+            print(f"Test Domain: {test_domain_name}. New test index: {final_test_envs[0]}.")
+            print(f"Loading a total of {len(domains_to_load)} domains: {domains_to_load}")
+
+            # Pass the pruned list of domains and the new test index to the parent.
+            super().__init__(self.dir, final_test_envs, hparams['data_augmentation'], hparams, environments_to_load=domains_to_load)
+        else:
+            print(f"--- Standard OfficeHome Mode Activated ---")
+            super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
 
 class VLCS(MultipleEnvironmentImageFolder):
     CHECKPOINT_FREQ = 300
     ENVIRONMENTS = ["C", "L", "S", "V"]
-    FULL_ENV_NAMES = ["Caltech101", "LabelMe", "SUN09", "VOC2007"] # From domain_mappings
+    FULL_ENV_NAMES = ["Caltech101", "LabelMe", "SUN09", "VOC2007"]
 
     def __init__(self, root, test_envs, hparams):
-        self.dir = os.path.join(root, "vlcs/")
-        all_folders_in_dir = [d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))]
-        is_synthetic_setting = any("SynDomain" in folder for folder in all_folders_in_dir)
+        self.dir = os.path.join(root, "VLCS/")
+        all_folders_in_dir = sorted([d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))])
+        is_synthetic_setting = any("zSynDomain" in folder for folder in all_folders_in_dir)
 
         if is_synthetic_setting:
-            dataset_name = self.__class__.__name__
             test_env_index = test_envs[0]
             test_domain_name = self.FULL_ENV_NAMES[test_env_index]
-            training_domains = get_training_domains(dataset_name, all_folders_in_dir, test_domain_name)
-            # PASS THE FILTERED LIST TO THE PARENT
-            super().__init__(self.dir, [], hparams['data_augmentation'], hparams, environments_to_load=training_domains)
+            
+            domains_to_load = []
+            for folder in all_folders_in_dir:
+                is_original = folder in self.FULL_ENV_NAMES
+                is_unrelated_synthetic = "zSynDomain" in folder and test_domain_name not in folder
+                if is_original or is_unrelated_synthetic:
+                    domains_to_load.append(folder)
+
+            final_test_envs = [domains_to_load.index(test_domain_name)]
+            
+            print(f"--- Activating PRUNED synthetic data mode for VLCS ---")
+            print(f"Test Domain: {test_domain_name}. New test index: {final_test_envs[0]}.")
+            print(f"Loading a total of {len(domains_to_load)} domains: {domains_to_load}")
+
+            super().__init__(self.dir, final_test_envs, hparams['data_augmentation'], hparams, environments_to_load=domains_to_load)
         else:
-            print(f"--- Standard {self.__class__.__name__} Mode Activated (No 'SynDomain' folders found) ---")
+            print(f"--- Standard VLCS Mode Activated ---")
             super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
 
 class PACS(MultipleEnvironmentImageFolder):
@@ -302,70 +311,112 @@ class PACS(MultipleEnvironmentImageFolder):
     FULL_ENV_NAMES = ["art_painting", "cartoon", "photo", "sketch"]
 
     def __init__(self, root, test_envs, hparams):
-        self.dir = os.path.join(root, "pacsSyn/") # Your custom folder name
-        all_folders_in_dir = [d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))]
-        is_synthetic_setting = any("SynDomain" in folder for folder in all_folders_in_dir)
+        self.dir = os.path.join(root, "PACS/")
+        all_folders_in_dir = sorted([d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))])
+        is_synthetic_setting = any("zSynDomain" in folder for folder in all_folders_in_dir)
 
         if is_synthetic_setting:
-            dataset_name = self.__class__.__name__
             test_env_index = test_envs[0]
             test_domain_name = self.FULL_ENV_NAMES[test_env_index]
-            training_domains = get_training_domains(dataset_name, all_folders_in_dir, test_domain_name)
-            # PASS THE FILTERED LIST TO THE PARENT
-            super().__init__(self.dir, [], hparams['data_augmentation'], hparams, environments_to_load=training_domains)
+
+            domains_to_load = []
+            for folder in all_folders_in_dir:
+                is_original = folder in self.FULL_ENV_NAMES
+                is_unrelated_synthetic = "zSynDomain" in folder and test_domain_name not in folder
+                if is_original or is_unrelated_synthetic:
+                    domains_to_load.append(folder)
+
+            final_test_envs = [domains_to_load.index(test_domain_name)]
+
+            print(f"--- Activating PRUNED synthetic data mode for PACS ---")
+            print(f"Test Domain: {test_domain_name}. New test index: {final_test_envs[0]}.")
+            print(f"Loading a total of {len(domains_to_load)} domains: {domains_to_load}")
+
+            super().__init__(self.dir, final_test_envs, hparams['data_augmentation'], hparams, environments_to_load=domains_to_load)
         else:
-            print(f"--- Standard {self.__class__.__name__} Mode Activated (No 'SynDomain' folders found) ---")
-            super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
-
-class OfficeHome(MultipleEnvironmentImageFolder):
-    CHECKPOINT_FREQ = 300
-    ENVIRONMENTS = ["A", "C", "P", "R"]
-    FULL_ENV_NAMES = ["Art", "Clipart", "Product", "Real World"] # Your folder names
-
-    def __init__(self, root, test_envs, hparams):
-        self.dir = os.path.join(root, "office_home/")
-        all_folders_in_dir = [d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))]
-        is_synthetic_setting = any("SynDomain" in folder for folder in all_folders_in_dir)
-
-        if is_synthetic_setting:
-            dataset_name = self.__class__.__name__
-            test_env_index = test_envs[0]
-            test_domain_name = self.FULL_ENV_NAMES[test_env_index]
-            training_domains = get_training_domains(dataset_name, all_folders_in_dir, test_domain_name)
-            # PASS THE FILTERED LIST TO THE PARENT
-            super().__init__(self.dir, [], hparams['data_augmentation'], hparams, environments_to_load=training_domains)
-        else:
-            print(f"--- Standard {self.__class__.__name__} Mode Activated (No 'SynDomain' folders found) ---")
+            print(f"--- Standard PACS Mode Activated ---")
             super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
 
 class TerraIncognita(MultipleEnvironmentImageFolder):
     CHECKPOINT_FREQ = 300
     ENVIRONMENTS = ["L100", "L38", "L43", "L46"]
-    FULL_ENV_NAMES = ["location_100", "location_38", "location_43", "location_46"] # Your folder names
+    FULL_ENV_NAMES = ["location_38", "location_43", "location_46", "location_100"]
 
     def __init__(self, root, test_envs, hparams):
-        self.dir = os.path.join(root, "terra_incognita/")
-        all_folders_in_dir = [d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))]
-        is_synthetic_setting = any("SynDomain" in folder for folder in all_folders_in_dir)
+        self.dir = os.path.join(root, "terra_incognitaSyn/")
+        all_folders_in_dir = sorted([d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))])
+        is_synthetic_setting = any("zSynDomain" in folder for folder in all_folders_in_dir)
 
         if is_synthetic_setting:
-            dataset_name = self.__class__.__name__
             test_env_index = test_envs[0]
             test_domain_name = self.FULL_ENV_NAMES[test_env_index]
-            training_domains = get_training_domains(dataset_name, all_folders_in_dir, test_domain_name)
-            # PASS THE FILTERED LIST TO THE PARENT
-            super().__init__(self.dir, [], hparams['data_augmentation'], hparams, environments_to_load=training_domains)
+
+            domains_to_load = []
+            for folder in all_folders_in_dir:
+                is_original = folder in self.FULL_ENV_NAMES
+                is_unrelated_synthetic = "zSynDomain" in folder and test_domain_name not in folder
+                if is_original or is_unrelated_synthetic:
+                    domains_to_load.append(folder)
+
+            final_test_envs = [domains_to_load.index(test_domain_name)]
+
+            print(f"--- Activating PRUNED synthetic data mode for TerraIncognita ---")
+            print(f"Test Domain: {test_domain_name}. New test index: {final_test_envs[0]}.")
+            print(f"Loading a total of {len(domains_to_load)} domains: {domains_to_load}")
+
+            super().__init__(self.dir, final_test_envs, hparams['data_augmentation'], hparams, environments_to_load=domains_to_load)
         else:
-            print(f"--- Standard {self.__class__.__name__} Mode Activated (No 'SynDomain' folders found) ---")
+            print(f"--- Standard TerraIncognita Mode Activated ---")
             super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
 
 class DomainNet(MultipleEnvironmentImageFolder):
     CHECKPOINT_FREQ = 1000
+    # The original environments, used to map the --test_envs index.
     ENVIRONMENTS = ["clip", "info", "paint", "quick", "real", "sketch"]
+    # Since there are no abbreviations, this is a direct copy of ENVIRONMENTS.
+    # It must match the folder names on your disk.
+    FULL_ENV_NAMES = ["clip", "info", "paint", "quick", "real", "sketch"]
+
     def __init__(self, root, test_envs, hparams):
+        # Define the directory for the DomainNet dataset.
         self.dir = os.path.join(root, "domain_net/")
-        super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
-            
+        
+        # Discover all physical folders in that directory.
+        all_folders_in_dir = sorted([d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))])
+        
+        # Check for your synthetic domain trigger ("zSynDomain").
+        # Note: You used "zSynDomain" in your provided file, I will use that for consistency.
+        is_synthetic_setting = any("zSynDomain" in folder for folder in all_folders_in_dir)
+
+        if is_synthetic_setting:
+            # Identify the test domain based on the input index.
+            test_env_index = test_envs[0]
+            test_domain_name = self.FULL_ENV_NAMES[test_env_index]
+
+            # Build the pruned list of domains to load:
+            # All original domains + synthetic domains not related to the test domain.
+            domains_to_load = []
+            for folder in all_folders_in_dir:
+                is_original = folder in self.FULL_ENV_NAMES
+                is_unrelated_synthetic = "zSynDomain" in folder and test_domain_name not in folder
+                if is_original or is_unrelated_synthetic:
+                    domains_to_load.append(folder)
+
+            # Find the new index of the test domain within the pruned list.
+            final_test_envs = [domains_to_load.index(test_domain_name)]
+
+            # Print verification messages.
+            print(f"--- Activating PRUNED synthetic data mode for DomainNet ---")
+            print(f"Test Domain: {test_domain_name}. New test index: {final_test_envs[0]}.")
+            print(f"Loading a total of {len(domains_to_load)} domains: {domains_to_load}")
+
+            # Call the parent constructor with the pruned list and the new test index.
+            super().__init__(self.dir, final_test_envs, hparams['data_augmentation'], hparams, environments_to_load=domains_to_load)
+        else:
+            # If no synthetic domains are found, use the original, standard behavior.
+            print(f"--- Standard DomainNet Mode Activated ---")
+            super().__init__(self.dir, test_envs, hparams['data_augmentation'], hparams)
+                            
 class SVIRO(MultipleEnvironmentImageFolder):
     CHECKPOINT_FREQ = 300
     ENVIRONMENTS = ["aclass", "escape", "hilux", "i3", "lexus", "tesla", "tiguan", "tucson", "x5", "zoe"]

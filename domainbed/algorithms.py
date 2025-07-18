@@ -4085,7 +4085,139 @@ class OT_EMAPivot_Confident(Algorithm):
 
 
 
+class OT_GW_EMAPivotAlign(Algorithm):
+    """
+    (The definitive POT-based version)
+    This algorithm combines the stable EMA Pivot framework with the robust,
+    working Gromov-Wasserstein computation from the POT library.
+    It uses entropic regularization for stability and performance.
+    """
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super(OT_GW_EMAPivotAlign, self).__init__(input_shape, num_classes, num_domains, hparams)
 
+        self.featurizer = networks.Featurizer(input_shape, self.hparams)
+        self.classifier = nn.Linear(self.featurizer.n_outputs, num_classes)
+        self.network = nn.Sequential(self.featurizer, self.classifier)
 
+        self.lambda_ce = self.hparams.get("lambda_ce", 1.0)
+        self.lambda_ot_align = self.hparams.get("lambda_ot_align", 0.01)
+        self.ot_epsilon = self.hparams.get("ot_epsilon", 0.1) # Used for entropic GW
+        self.ema_momentum = self.hparams.get("ema_momentum", 0.999)
+        self.ema_pivot_size = self.hparams.get("ema_pivot_size", 256)
 
+        self.register_buffer("ema_queue", torch.randn(
+            self.ema_pivot_size, self.featurizer.n_outputs
+        ))
+        self.ema_queue = F.normalize(self.ema_queue, dim=1)
+        self.register_buffer("ema_queue_ptr", torch.zeros(1, dtype=torch.long))
+
+        self.optimizer = torch.optim.Adam(
+            self.network.parameters(),
+            lr=self.hparams["lr"],
+            weight_decay=self.hparams["weight_decay"],
+        )
+        self.register_buffer("update_count", torch.tensor([0]))
+
+    @torch.no_grad()
+    def _update_ema_queue(self, batch_features):
+        # This function is taken directly from the working EMAPivotAlign
+        b_size = batch_features.shape[0]
+        ptr = int(self.ema_queue_ptr)
+        if b_size > self.ema_pivot_size:
+            indices = torch.randperm(b_size, device=batch_features.device)[:self.ema_pivot_size]
+            b_size = self.ema_pivot_size
+            batch_features = batch_features[indices]
+        if ptr + b_size > self.ema_pivot_size:
+            part1_size = self.ema_pivot_size - ptr
+            self.ema_queue[ptr:] = batch_features[:part1_size]
+            part2_size = b_size - part1_size
+            self.ema_queue[:part2_size] = batch_features[part1_size:]
+            ptr = part2_size
+        else:
+            self.ema_queue[ptr : ptr + b_size] = batch_features
+            ptr += b_size
+        self.ema_queue_ptr[0] = ptr % self.ema_pivot_size
+
+    # --- TRANSPLANTED AND ENHANCED GW "ENGINE" ---
+    def _compute_gw_loss(self, features1, features2):
+        if features1.shape[0] <= 1 or features2.shape[0] <= 1:
+            return torch.tensor(0.0, device=features1.device)
+            
+        try:
+            # Create uniform probability vectors
+            p = torch.ones(features1.shape[0], device=features1.device) / features1.shape[0]
+            q = torch.ones(features2.shape[0], device=features2.device) / features2.shape[0]
+
+            # Compute internal cost matrices using squared Euclidean distance
+            cost_matrix1 = ot.dist(features1, features1, metric='sqeuclidean')
+            cost_matrix2 = ot.dist(features2, features2, metric='sqeuclidean')
+
+            # Use the entropic regularized GW solver for stability and performance.
+            # This is the modern, preferred method for GW in deep learning.
+            gw_loss = ot.gromov.entropic_gromov_wasserstein2(
+                cost_matrix1, cost_matrix2, p, q,
+                epsilon=self.ot_epsilon, loss_fun='square_loss'
+            )
+            return gw_loss
+
+        except Exception as e:
+            print(f"Warning: POT GW computation failed unexpectedly: {e}")
+            return torch.tensor(0.0, device=features1.device)
+    # --- END OF TRANSPLANTED ENGINE ---
+
+    def update(self, minibatches, unlabeled=None):
+        device = next(self.network.parameters()).device
+        all_x = torch.cat([x for x, y in minibatches]).to(device)
+        all_y = torch.cat([y for x, y in minibatches]).to(device)
+        domain_indices_cumsum = torch.cumsum(
+            torch.tensor([x.shape[0] for x, _ in minibatches], device=device), dim=0
+        )
+        domain_starts = torch.cat(
+            (torch.tensor([0], device=device), domain_indices_cumsum[:-1])
+        )
+
+        features = self.featurizer(all_x)
+        logits = self.classifier(features)
+        loss_cls = F.cross_entropy(logits, all_y)
+
+        loss_ot_align_accum = 0.0
+        ot_comparisons_count = 0
+        domain_features_list = []
+        for i in range(len(minibatches)):
+            start, end = domain_starts[i], domain_indices_cumsum[i]
+            current_domain_features = features[start:end]
+            if current_domain_features.shape[0] > 1:
+                domain_features_list.append(current_domain_features)
         
+        if len(domain_features_list) > 0:
+            target_features = self.ema_queue.clone().detach()
+
+            for source_features in domain_features_list:
+                source_features_normalized = F.normalize(source_features, dim=1)
+                
+                # --- CALL THE NEW, RELIABLE GW FUNCTION ---
+                ot_divergence = self._compute_gw_loss(source_features_normalized, target_features)
+                
+                loss_ot_align_accum += ot_divergence
+                ot_comparisons_count += 1
+
+            loss_ot_alignment = (loss_ot_align_accum / ot_comparisons_count) if ot_comparisons_count > 0 \
+                                    else torch.tensor(0.0, device=device)
+        else:
+            loss_ot_alignment = torch.tensor(0.0, device=device)
+
+        # Update queue with detached, normalized features
+        all_batch_features = F.normalize(features.detach(), dim=1)
+        self._update_ema_queue(all_batch_features)
+        
+        total_loss = self.lambda_ce * loss_cls + self.lambda_ot_align * loss_ot_alignment
+
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        self.optimizer.step()
+        self.update_count += 1
+
+        return {"loss": total_loss.item(), "loss_cls": loss_cls.item(), "loss_ot_align": loss_ot_alignment.item()}
+
+    def predict(self, x):
+        return self.network(x)
