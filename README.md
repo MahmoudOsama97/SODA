@@ -7,10 +7,10 @@
 - torch 1.11.0
 - torchvision 0.12.0
 
-![Training](figs/train.jpeg)
+![arch](figs/arch.PNG)
 Figure 1: Federated Domain Generalization Architecture. Each client (Domains A, B, C) processes local data through a frozen ViT-Base model followed by  a trainable MoE Adapter. The resulting parameters (µ, σ) are sent to the  federated server for aggregation.
 
-![Testing](figs/testclient.png)
+![tSNE](figs/tSNE.png)
 Figure 2: Federated Domain Generalization Inference Architecture. The server stores adapter parameters (μ, σ) from multiple domains. For an unseen domain, the client extracts features, calculates similarity to known domains, and creates weighted adapter parameters for final prediction while maintaining frozen ViT-Base backbones.
 
 ## Dataset
