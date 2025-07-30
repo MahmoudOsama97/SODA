@@ -1,4 +1,4 @@
-# SOTA: Stabilizing Optimal Transport Alignment for Domain Generalization via a Dynamic Feature Reservoir
+# SODA: Stabilized Optimal Transport Based Domain Alignment for Domain Generalization via a Dynamic Feature Reservoir
 
 ## Requirements
 
