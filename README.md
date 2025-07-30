@@ -7,15 +7,15 @@
 - torch 1.11.0
 - torchvision 0.12.0
 
-![arch](figs/arch.PNG)
-Figure 1: Federated Domain Generalization Architecture. Each client (Domains A, B, C) processes local data through a frozen ViT-Base model followed by  a trainable MoE Adapter. The resulting parameters (µ, σ) are sent to the  federated server for aggregation.
+![arch](fig/arch.PNG)
+Figure 1: An overview of the proposed SODA framework. During a training step, images from multiple source domains are passed through a shared feature extractor Fθ. The resulting features Z are used in two parallel paths: (1) a supervised classification path (solid blue line) that computes the standard cross-entropy loss Lcls, and (2) a stabilized alignment path (solid purple line). In the alignment path, features are L2-normalized and aligned to the Dynamic Feature Reservoir (DFR) using an Optimal Transport loss, LOT. The DFR is a high-capacity feature queue that acts as a stable, synthetic pivot distribution. The total loss is backpropagated to update the model (dashed red line). Finally, in a gradient-free step, the DFR is updated with the new, normalized features from the current batch (dashed purple line).
 
-![tSNE](figs/tSNE.png)
-Figure 2: Federated Domain Generalization Inference Architecture. The server stores adapter parameters (μ, σ) from multiple domains. For an unseen domain, the client extracts features, calculates similarity to known domains, and creates weighted adapter parameters for final prediction while maintaining frozen ViT-Base backbones.
+![tSNE](fig/tSNE.png)
+Figure 2: t-SNE visualization of the ResNet-50 feature space on the PACS dataset with Art as the unseen target domain. Points are colored by their domain and numbered by their class label. (a) The baseline ERM model exhibits strong domain-based clustering, indicating a failure to learn invariant features. (b) Our SODA method successfully aligns the domains, resulting in distinct class-based clusters where features from all domains are intermingled.
 
 ## Dataset
 
-Firstly create directory for log files and change the dataset path (`pacs_path`, `officehome_path` and `vlcs_path`) and log path (`log_count_path`) in configs/default.py.
+Firstly, create a directory for output files and change the dataset path and output path.
 
 Please download the datasets from the official links:
 
@@ -29,24 +29,24 @@ To train, you can run the command:
 `
 # Run your program
 python3 -m domainbed.scripts.sweep launch\
-       --output_dir=PathToOutFolder \
+       --output_dir=./PathToOutput/ \
        --command_launcher multi_gpu\
-       --algorithms OT_EMAPivotAlign \
-       --datasets TheDataset \
-       --n_hparams 30 \
+       --algorithms SODA \
+       --datasets DATASET \
+       --n_hparams 100 \
        --n_trials 3 \
        --skip_confirmation \
        --data_dir=./domainbed/data/ \
        --single_test_envs \
 
 python -m domainbed.scripts.sweep delete_incomplete\
-       --output_dir=PathToOutFolder \
+       --output_dir=./PathToOutput/ \
        --command_launcher multi_gpu\
        --data_dir=./domainbed/data/ \
        --skip_confirmation \
 
 python -m domainbed.scripts.collect_results\
-       --input_dir=PathToOutFolder
+       --input_dir=./PathToOutput/
 `
 
 ## Acknowledgement
