@@ -2581,9 +2581,8 @@ class SODA(Algorithm):
         # --- MODIFICATION: Use geomloss.SamplesLoss ---
         # This one object handles everything efficiently.
         # 'blur' is the equivalent of epsilon/regularization.
-        # 'debias=True' is generally recommended for stability.
         self.sinkhorn_loss = geomloss.SamplesLoss(
-            loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=True
+            loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=False
         )
         # --- END MODIFICATION ---
 
