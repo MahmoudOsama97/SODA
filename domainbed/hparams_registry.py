@@ -139,221 +139,11 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('ib_lambda', 1e2, lambda r: 10**r.uniform(-1, 5))
         _hparam('ib_penalty_anneal_iters', 500,
                 lambda r: int(10**r.uniform(0, 4)))
-    elif algorithm == "OT_MarginalDomainAlign": # Or your chosen class name
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-        
-        # OT specific parameters
-        _hparam("ot_cost_metric", "sqeuclidean", lambda r: "sqeuclidean") # Usually fixed, not tuned
-        _hparam("ot_epsilon", 0.1, lambda r: r.choice([0.01, 0.1, 0.5])) # Try a range 
-        _hparam("ot_target_type", "pooled", lambda r: r.choice(['pooled', 'pairwise'])) # How to align
-        _hparam("ot_p", 2, lambda r: 2) # Usually fixed to 2 for sqeuclidean, 1 for euclidean
-        _hparam("ot_debias", True, lambda r: bool(r.choice([True, False])))    # Use debiased Sinkhorn divergence?
 
-    elif algorithm == "OT_GromovWasserstein_Align": # Or your chosen class name
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-        # OT specific parameters
-        _hparam("ot_target_type", "pooled", lambda r: r.choice(['pooled', 'pairwise'])) # How to align
-
-    elif algorithm == "OT_AnnealedAlign": # Or your chosen class name
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-        
-        # OT specific parameters
-        _hparam("ot_cost_metric", "sqeuclidean", lambda r: "sqeuclidean") # Usually fixed, not tuned
-        _hparam("ot_epsilon", 0.1, lambda r: r.choice([0.01, 0.1, 0.5])) # Try a range 
-        _hparam("ot_target_type", "pooled", lambda r: r.choice(['pooled', 'pairwise'])) # How to align
-        _hparam("ot_p", 2, lambda r: 2) # Usually fixed to 2 for sqeuclidean, 1 for euclidean
-        _hparam("ot_debias", True, lambda r: bool(r.choice([True, False])))    # Use debiased Sinkhorn divergence?
-
-    elif algorithm == "OT_PivotAlign": # Or your chosen class name
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-        
-        # OT specific parameters
-        _hparam("ot_cost_metric", "sqeuclidean", lambda r: "sqeuclidean") # Usually fixed, not tuned
-        _hparam("ot_epsilon", 0.1, lambda r: r.choice([0.01, 0.1, 0.5])) # Try a range 
-        _hparam("ot_target_type", "pooled", lambda r: r.choice(['pooled', 'pairwise'])) # How to align
-        _hparam("ot_p", 2, lambda r: 2) # Usually fixed to 2 for sqeuclidean, 1 for euclidean
-        _hparam("ot_debias", True, lambda r: bool(r.choice([True, False])))    # Use debiased Sinkhorn divergence?
-
-
-    elif algorithm == "OT_EMAPivotAlign":
-        # --- Core EMA Pivot Hyperparameters ---
-        # Momentum for the EMA update of the pivot. Higher values mean a more stable target.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
-
-        # Size (number of feature vectors) of the synthetic pivot domain.
-        # This depends on available GPU memory.
-        _hparam("ema_pivot_size", 128, lambda r: int(r.choice([128, 256])))
-
-        # --- Optimal Transport Hyperparameters ---
-
-        # Regularization strength for the Sinkhorn algorithm (passed as 'reg' to ot.sinkhorn2).
-        # Controls the smoothness of the OT plan.
-        _hparam("ot_reg", 0.1, lambda r: r.choice([0.05, 0.1, 0.5]))
-        
-        # --- Standard Loss Weight ---
-        
-        # Weight for the standard classification loss (usually fixed at 1.0).
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-
-    elif algorithm == "OT_GW_EMAPivotAlign":
-        # --- Core EMA Pivot Hyperparameters ---
-        # Momentum for the EMA update of the pivot. Higher values mean a more stable target.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
-
-        # Size (number of feature vectors) of the synthetic pivot domain.
-        # This depends on available GPU memory.
-        _hparam("ema_pivot_size", 128, lambda r: int(r.choice([128, 256])))
-
-        # --- Optimal Transport Hyperparameters ---
-
-        # Regularization strength for the Sinkhorn algorithm (passed as 'reg' to ot.sinkhorn2).
-        # Controls the smoothness of the OT plan.
-        _hparam("ot_reg", 0.1, lambda r: r.choice([0.05, 0.1, 0.5]))
-        
-        # --- Standard Loss Weight ---
-        
-        # Weight for the standard classification loss (usually fixed at 1.0).
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-
-
-    elif algorithm == "OT_EMAPivot_Confident":
-        # --- Core EMA Pivot Hyperparameters ---
-
-        # Momentum for the EMA update. Higher values mean a more stable target.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999, 0.9999]))
-
-        # Size (number of feature vectors) of the pivot queue.
-        # This is usually a fixed architectural choice, not searched.
-        _hparam("ema_pivot_size", 256, lambda r: 256)
-
-        # --- NEW: Confidence threshold for updating the EMA queue ---
-        # Only features from predictions with confidence > this value will update the pivot.
-        _hparam("ema_confidence_gate", 0.9, lambda r: r.uniform(0.7, 0.95))
-
-        # --- Optimal Transport Hyperparameters ---
-
-        # Regularization strength for the Sinkhorn algorithm.
-        # Note: The parameter name is 'ot_epsilon' in the algorithm code.
-        _hparam("ot_epsilon", 0.1, lambda r: r.choice([0.01, 0.1, 0.5])) # Try a range 
-
-        # --- Loss Weight Hyperparameters ---
-        
-        # Weight for the standard classification loss (usually fixed).
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-
-        # Weight for the Optimal Transport alignment loss.
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-
-
-    elif algorithm == "OT_EMAPivot_Confident_SSL":
-        # --- Core EMA Pivot Hyperparameters ---
-
-        # Momentum for the EMA update. Higher values mean a more stable target.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999, 0.9999]))
-
-        # Size (number of feature vectors) of the pivot queue.
-        _hparam("ema_pivot_size", 256, lambda r: 256) # Usually fixed
-
-        # --- NEW: Confidence threshold for updating the EMA queue ---
-        # Only features from predictions with confidence > this value will update the pivot.
-        _hparam("ema_confidence_gate", 0.9, lambda r: r.uniform(0.7, 0.95))
-
-        # --- Optimal Transport Hyperparameters ---
-
-        # Regularization strength for the Sinkhorn algorithm.
-        _hparam("ot_epsilon", 0.1, lambda r: 10**r.uniform(-2, -0.3)) # Search from 0.01 to 0.5
-
-        # --- Loss Weight Hyperparameters ---
-        
-        # Weight for the standard classification loss.
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-
-        # Weight for the Optimal Transport alignment loss.
-        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([1e-4, 1e-3, 0.001, 0.1])) # Start much lower
-        
-        # --- NEW: Weight for the Self-Supervised (SSL) rotation loss ---
-        _hparam("lambda_ssl", 0.5, lambda r: r.uniform(0.1, 1.0))
-
-
-
-
-    elif algorithm == "OT_BarycentricPivotAlign":
-        # --- Core Algorithm Hyperparameters ---
-        # Weight for aligning to the stable, global EMA pivot.
-        _hparam("lambda_ot_global", 0.1, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1]))
-        # Weight for aligning to other domains within the minibatch.
-        _hparam("lambda_ot_local", 0.1, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1]))
-        # Momentum for the smooth pivot update. Higher is more stable.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
-        # # Size of the pivot buffer.
-        _hparam("pivot_size", 128, lambda r: int(r.choice([128, 256])))
-        # Base regularization for Sinkhorn. This will be adapted by model confidence.
-        _hparam("base_ot_reg", 0.1, lambda r: r.choice([0.05, 0.1, 0.5]))
-        
-        # --- Standard Loss Weight ---
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-
-    elif algorithm == "OT_ProjectedPivotAlign":
-        # Weight for the simplified global alignment loss.
-        _hparam("lambda_ot_global", 0.1, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1]))
-        # Momentum for the smooth pivot update.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
-        # Size of the low-dimensional pivot buffer.
-        _hparam("pivot_size", 128, lambda r: int(r.choice([128, 256])))
-        # Regularization for Sinkhorn.
-        _hparam("ot_reg", 0.1, lambda r: r.choice([0.05, 0.1, 0.5]))
-        # Dimension of the projection head output.
-        _hparam("projection_dim", 128, lambda r: int(r.choice([64, 128, 256])))
-        # Standard classification loss weight.
-        _hparam("lambda_ce", 1.0, lambda r: 1.0)
-
-    elif algorithm == "OT_DualPivotAlign":
-        # Weight for the dual OT alignment loss.
-        _hparam("lambda_ot_global", 0.1, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1]))
-        # Momentum for the smooth pivot update.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
-        # Size of the pivot buffer.
-        _hparam("pivot_size", 128, lambda r: int(r.choice([128, 256])))
-        # Regularization for Sinkhorn.
-        _hparam("ot_reg", 0.1, lambda r: r.choice([0.05, 0.1, 0.5, 1.0]))
-        # Standard classification loss weight.
-        _hparam("lambda_ce", 1.0, lambda r: 1.0)
-
-    elif algorithm == "OT_FastPivotAlign":
-        # Weight for the dual OT alignment loss.
-        _hparam("lambda_ot_global", 0.1, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1]))
-        # Momentum for the smooth pivot update.
-        _hparam("ema_momentum", 0.999, lambda r: r.choice([0.99, 0.999]))
-        # Size of the low-dimensional pivot buffer.
-        _hparam("pivot_size", 128, lambda r: int(r.choice([128, 256])))
-        # Regularization for Sinkhorn.
-        _hparam("ot_reg", 0.1, lambda r: r.choice([0.1, 0.5, 1.0])) # Can be larger for low-dim
-        # Dimension of the projection head output. THIS IS THE KEY SPEED KNOB.
-        _hparam("projection_dim", 128, lambda r: int(r.choice([64, 128])))
-        # Standard classification loss weight.
-        _hparam("lambda_ce", 1.0, lambda r: 1.0)
-
-    elif algorithm == "OT_GromovPivotAlign":
-        # Weight for the GW alignment loss.
-        _hparam("lambda_ot_global", 0.1, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1]))
-        
-        # Epsilon regularization for the entropic Gromov-Wasserstein solver.
-        _hparam("ot_epsilon", 0.1, lambda r: r.choice([1, 5]))
-        
-        # The alignment strategy. 'pivot' is the main one for this idea.
-        _hparam("ot_target_type", "pivot", lambda r: r.choice(['pivot', 'pooled', 'pairwise']))
-        
-        # Standard classification loss weight.
-        _hparam("lambda_ce", 1.0, lambda r: r.uniform(0.5, 1.5))
-
-
-
+    elif algorithm == "SODA":
+        _hparam("ema_pivot_size", 128, lambda r: int(r.choice([128, 256, 512])))
+        _hparam("ot_reg", 0.1, lambda r: r.choice([0.01, 0.05, 0.1, 0.5, 1.0]))
+        _hparam("lambda_ot_align", 0.01, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1.0])) 
 
     elif algorithm == "IB_IRM":
         _hparam('irm_lambda', 1e2, lambda r: 10**r.uniform(-1, 5))
@@ -419,17 +209,17 @@ def _hparams(algorithm, dataset, random_seed):
 
     if dataset in SMALL_IMAGES:
         if algorithm == "ADRMX":
-            _hparam('lr', 3e-3, lambda r: r.choice([5e-4, 1e-3, 2e-3, 3e-3]))
+            _hparam('lr', 2e-5, lambda r: 2e-5)
         else:
-            _hparam('lr', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))
+            _hparam('lr', 2e-5, lambda r: 2e-5)
     else:
         if algorithm == "ADRMX":
-            _hparam('lr', 3e-5, lambda r: r.choice([2e-5, 3e-5, 4e-5, 5e-5]))
+            _hparam('lr', 2e-5, lambda r: 2e-5)
         else:
             _hparam('lr', 5e-5, lambda r: 10**r.uniform(-5, -3.5))
 
     if dataset in SMALL_IMAGES:
-        _hparam('weight_decay', 0., lambda r: 0.)
+        _hparam('weight_decay', 2e-5, lambda r: 2e-5)
     else:
         _hparam('weight_decay', 0., lambda r: 10**r.uniform(-6, -2))
 
@@ -445,7 +235,7 @@ def _hparams(algorithm, dataset, random_seed):
     elif dataset == 'DomainNet':
         _hparam('batch_size', 32, lambda r: int(2**r.uniform(3, 5)))
     else:
-        _hparam('batch_size', 32, lambda r: int(2**r.uniform(5, 6)))
+        _hparam("batch_size", 32, lambda r: 32)
 
     if algorithm in ['DANN', 'CDANN'] and dataset in SMALL_IMAGES:
         _hparam('lr_g', 1e-3, lambda r: 10**r.uniform(-4.5, -2.5))
