@@ -4,18 +4,19 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.autograd as autograd
-import geomloss
 from itertools import combinations
-import ot
-
-import copy
-import numpy as np
 from collections import OrderedDict
 try:
     from backpack import backpack, extend
     from backpack.extensions import BatchGrad
 except:
     backpack = None
+
+try:
+    import geomloss
+except ImportError:
+    geomloss = None
+    print("Warning: geomloss not installed. SODA algorithm will not be available.")
 
 from domainbed import networks
 from domainbed.lib.misc import (
@@ -64,7 +65,7 @@ ALGORITHMS = [
     "OT_GromovWasserstein_Align",
     "OT_AnnealedAlign",
     "OT_PivotAlign",
-
+    "SODA",
 ]
 
 def get_algorithm_class(algorithm_name):

@@ -141,7 +141,7 @@ def _hparams(algorithm, dataset, random_seed):
                 lambda r: int(10**r.uniform(0, 4)))
 
     elif algorithm == "SODA":
-        _hparam("ema_pivot_size", 128, lambda r: int(r.choice([128, 256, 512])))
+        _hparam("ema_pivot_size", 256, lambda r: int(r.choice([128, 256, 512])))
         _hparam("ot_reg", 0.1, lambda r: r.choice([0.01, 0.05, 0.1, 0.5, 1.0]))
         _hparam("lambda_ot_align", 0.01, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1.0])) 
 
@@ -261,3 +261,13 @@ def default_hparams(algorithm, dataset):
 
 def random_hparams(algorithm, dataset, seed):
     return {a: c for a, (b, c) in _hparams(algorithm, dataset, seed).items()}
+
+
+# SODA hyperparameters
+def _hparams_soda(random_state):
+    return {
+        'soda_ema_pivot_size': (256, lambda r: int(r.choice([128, 256, 512, 1024]))),
+        'soda_lambda_ot': (1.0, lambda r: 10**r.uniform(-2, 1)),
+        'soda_sinkhorn_blur': (0.1, lambda r: r.choice([0.05, 0.1, 0.2])),
+        'soda_sinkhorn_scaling': (0.9, lambda r: r.choice([0.8, 0.9, 0.95])),
+    }
