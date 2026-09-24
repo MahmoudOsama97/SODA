@@ -2855,6 +2855,7 @@ class SODA(Algorithm):
         pot = geomloss.SamplesLoss(loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=False,
                                    potentials=True, backend="tensorized")
         Fp, Gp = pot(a, xs, b, xt)
+        Fp, Gp = Fp.reshape(-1), Gp.reshape(-1)  # GeomLoss returns (N,1)/(M,1)
         C = 0.5 * torch.cdist(xs, xt) ** 2
         logpi = torch.log(a)[:, None] + torch.log(b)[None, :] + (Fp[:, None] + Gp[None, :] - C) / self.eps
         pi = logpi.exp()
