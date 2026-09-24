@@ -72,6 +72,7 @@ def main():
     p.add_argument("--K_ref", type=int, default=4096)
     p.add_argument("--blurs", default="0.1,1.0")
     p.add_argument("--param_grad", action="store_true", help="also gradients w.r.t. layer4 params")
+    p.add_argument("--sketch_dim", type=int, default=16384)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
     args = p.parse_args()
@@ -105,6 +106,12 @@ def main():
 
     mechanisms = [f"dfr_{k}" for k in Ks] + ["single", "pooled"]
     params = list(alg.featurizer.network.layer4.parameters()) if args.param_grad else []
+    if params:  # count-sketch of layer4 gradients (unbiased for inner products) to keep memory small
+        n_par = sum(p_.numel() for p_ in params)
+        gen = torch.Generator(device="cpu").manual_seed(1234)
+        sk_idx = torch.randint(0, args.sketch_dim, (n_par,), generator=gen).to(device)
+        sk_sign = (torch.randint(0, 2, (n_par,), generator=gen) * 2 - 1).float().to(device)
+        print(f"layer4 params: {n_par}, sketch dim {args.sketch_dim}", flush=True)
     results = {"ckpt": args.ckpt, "step": step, "N": N, "B": B, "m": m, "a": args.a, "b": args.b,
                "K_ref": args.K_ref, "hparams": {k: hp[k] for k in ("ema_pivot_size", "ot_epsilon",
                "ot_debias", "lambda_ot_align", "lr")}, "by_blur": {}}
@@ -125,11 +132,16 @@ def main():
                 with torch.enable_grad():
                     saved = [(mod, mod.momentum) for mod in alg.featurizer.modules()
                              if isinstance(mod, torch.nn.modules.batchnorm._BatchNorm)]
+                    drops = [mod for mod in alg.featurizer.modules() if isinstance(mod, torch.nn.Dropout)]
                     for mod, _ in saved:
                         mod.momentum = 0.0
+                    for mod in drops:
+                        mod.eval()
                     zp = F.normalize(alg.featurizer(xu), dim=1)
                     for mod, mom in saved:
                         mod.momentum = mom
+                    for mod in drops:
+                        mod.train()
 
             def grads(P):
                 with torch.enable_grad():
@@ -138,6 +150,7 @@ def main():
                     if params:
                         gp = torch.autograd.grad(L(zp, P), params, retain_graph=True)
                         gp = torch.cat([t.flatten() for t in gp])
+                        gp = torch.zeros(args.sketch_dim, device=device).index_add_(0, sk_idx, gp * sk_sign)
                 return g.flatten(), gp
 
             g, gp = grads(ref_pool)
