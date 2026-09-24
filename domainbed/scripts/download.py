@@ -13,8 +13,11 @@ import json
 import os
 import urllib
 
-from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
-from wilds.datasets.fmow_dataset import FMoWDataset
+try:
+    from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+    from wilds.datasets.fmow_dataset import FMoWDataset
+except ImportError:
+    Camelyon17Dataset = FMoWDataset = None
 
 
 # utils #######################################################################
@@ -291,15 +294,24 @@ def download_spawrious(data_dir, remove=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Download datasets')
     parser.add_argument('--data_dir', type=str, required=True)
+    parser.add_argument('--datasets', nargs='+',
+                        default=['PACS', 'VLCS', 'OfficeHome', 'TerraIncognita', 'DomainNet'])
     args = parser.parse_args()
 
-    # download_mnist(args.data_dir)
-    # download_pacs(args.data_dir)
-    # download_office_home(args.data_dir)
-    # download_domain_net(args.data_dir)
-    # download_vlcs(args.data_dir)
-    download_terra_incognita(args.data_dir)
-    # download_spawrious(args.data_dir)
-    # download_sviro(args.data_dir)
-    # Camelyon17Dataset(root_dir=args.data_dir, download=True)
-    # FMoWDataset(root_dir=args.data_dir, download=True)
+    fns = {
+        'MNIST': (download_mnist, 'MNIST'),
+        'PACS': (download_pacs, 'PACS'),
+        'VLCS': (download_vlcs, 'VLCS'),
+        'OfficeHome': (download_office_home, 'office_home'),
+        'TerraIncognita': (download_terra_incognita, 'terra_incognita'),
+        'DomainNet': (download_domain_net, 'domain_net'),
+    }
+    for name in args.datasets:
+        fn, folder = fns[name]
+        if os.path.isdir(os.path.join(args.data_dir, folder)) and \
+                len(os.listdir(os.path.join(args.data_dir, folder))) > 0:
+            print(f"[skip] {name}: {folder} already present")
+            continue
+        print(f"[download] {name}", flush=True)
+        fn(args.data_dir)
+        print(f"[done] {name}", flush=True)

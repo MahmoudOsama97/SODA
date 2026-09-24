@@ -2578,12 +2578,14 @@ class SODA(Algorithm):
         self.ot_epsilon = self.hparams.get("ot_epsilon", 0.1)
         self.ema_momentum = self.hparams.get("ema_momentum", 0.999)
         self.ema_pivot_size = self.hparams.get("ema_pivot_size", 256)
+        self.ot_debias = bool(self.hparams.get("ot_debias", False))
+        self.align_start_step = int(self.hparams.get("align_start_step", 0))
 
         # --- MODIFICATION: Use geomloss.SamplesLoss ---
         # This one object handles everything efficiently.
         # 'blur' is the equivalent of epsilon/regularization.
         self.sinkhorn_loss = geomloss.SamplesLoss(
-            loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=False
+            loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=self.ot_debias
         )
         # --- END MODIFICATION ---
 
@@ -2644,7 +2646,7 @@ class SODA(Algorithm):
             if current_domain_features.shape[0] > 0:
                 domain_features_list.append(current_domain_features)
         
-        if len(domain_features_list) > 0:
+        if len(domain_features_list) > 0 and int(self.update_count) >= self.align_start_step:
             target_features = self.ema_queue.clone().detach()
 
             for source_features in domain_features_list:

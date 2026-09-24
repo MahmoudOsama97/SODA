@@ -11,8 +11,11 @@ from torchvision.transforms.functional import rotate
 from .domain_mappings import get_training_domains
 
 
-from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
-from wilds.datasets.fmow_dataset import FMoWDataset
+try:
+    from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+    from wilds.datasets.fmow_dataset import FMoWDataset
+except ImportError:  # wilds is only needed for WILDS datasets
+    Camelyon17Dataset = FMoWDataset = None
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -343,7 +346,7 @@ class TerraIncognita(MultipleEnvironmentImageFolder):
     FULL_ENV_NAMES = ["location_38", "location_43", "location_46", "location_100"]
 
     def __init__(self, root, test_envs, hparams):
-        self.dir = os.path.join(root, "terra_incognitaSyn/")
+        self.dir = os.path.join(root, "terra_incognita/")
         all_folders_in_dir = sorted([d for d in os.listdir(self.dir) if os.path.isdir(os.path.join(self.dir, d))])
         is_synthetic_setting = any("zSynDomain" in folder for folder in all_folders_in_dir)
 

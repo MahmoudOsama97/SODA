@@ -109,15 +109,16 @@ class ResNet(torch.nn.Module):
     """ResNet with the softmax chopped off and the batchnorm frozen"""
     def __init__(self, input_shape, hparams):
         super(ResNet, self).__init__()
-        if hparams['resnet18']:
-            self.network = torchvision.models.resnet18(pretrained=True)
-            self.n_outputs = 512
-        else:
-            self.network = torchvision.models.resnet50(pretrained=True)
-            self.n_outputs = 2048
-
         if hparams['resnet50_augmix']:
             self.network = timm.create_model('resnet50.ram_in1k', pretrained=True)
+            self.n_outputs = 2048
+        elif hparams['resnet18']:
+            self.network = torchvision.models.resnet18(
+                weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
+            self.n_outputs = 512
+        else:
+            self.network = torchvision.models.resnet50(
+                weights=torchvision.models.ResNet50_Weights.IMAGENET1K_V1)
             self.n_outputs = 2048
 
         # self.network = remove_batch_norm_from_resnet(self.network)

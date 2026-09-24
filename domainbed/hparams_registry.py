@@ -142,7 +142,9 @@ def _hparams(algorithm, dataset, random_seed):
 
     elif algorithm == "SODA":
         _hparam("ema_pivot_size", 256, lambda r: int(r.choice([128, 256, 512])))
-        _hparam("ot_reg", 0.1, lambda r: r.choice([0.01, 0.05, 0.1, 0.5, 1.0]))
+        _hparam("ot_epsilon", 0.1, lambda r: r.choice([0.01, 0.05, 0.1, 0.5, 1.0]))
+        _hparam("ot_debias", False, lambda r: False)
+        _hparam("align_start_step", 0, lambda r: 0)
         _hparam("lambda_ot_align", 0.01, lambda r: r.choice([0.0001, 0.001, 0.01, 0.1, 1.0])) 
 
     elif algorithm == "IB_IRM":
