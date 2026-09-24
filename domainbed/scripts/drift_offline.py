@@ -1,4 +1,4 @@
-"""E3: pivot drift from a logged feature stream (exact W2, POT network simplex; CPU).
+"""E3: pivot drift from a logged feature stream (exact W2 via assignment; CPU).
 
 Reads <probe_dir>/stream_*.pt (per-step normalized batch features, labels, domains, written by
 SODA with dump_stream=true) and queue_*.pt (the algorithm's actual reservoir every 100 steps).
@@ -21,14 +21,18 @@ import os
 from multiprocessing import Pool
 
 import numpy as np
-import ot
 import torch
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cdist
 
 
 def w2(X, Y):
-    a = np.full(len(X), 1.0 / len(X)); b = np.full(len(Y), 1.0 / len(Y))
-    M = ot.dist(X, Y, metric="sqeuclidean")
-    return float(math.sqrt(max(ot.emd2(a, b, M, numItermax=2_000_000), 0.0)))
+    """Exact W2 between two uniform empirical measures of equal size: for equal sizes and
+    uniform weights the optimal coupling is a permutation (Birkhoff), i.e. an assignment problem."""
+    assert len(X) == len(Y), (len(X), len(Y))
+    M = cdist(X.astype(np.float64), Y.astype(np.float64), "sqeuclidean")
+    r, c = linear_sum_assignment(M)
+    return float(math.sqrt(max(M[r, c].mean(), 0.0)))
 
 
 def load_stream(probe_dir):
