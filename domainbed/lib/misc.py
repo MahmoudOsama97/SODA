@@ -611,3 +611,37 @@ class SupConLossLambda(torch.nn.Module):
                 continue
             loss -= loss_i # sum and average over num positives
         return loss/(batch_size-nans+1) # avg over batch
+
+
+def accuracy_per_class(network, loader, weights, device, num_classes):
+    """Like accuracy(), but also returns per-class recall (None for absent classes)."""
+    correct = torch.zeros(num_classes)
+    count = torch.zeros(num_classes)
+    total_correct = 0.
+    total = 0.
+    weights_offset = 0
+
+    network.eval()
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            p = network.predict(x)
+            if weights is None:
+                batch_weights = torch.ones(len(x), device=device)
+            else:
+                batch_weights = weights[weights_offset : weights_offset + len(x)].to(device)
+                weights_offset += len(x)
+            if p.size(1) == 1:
+                hit = p.gt(0).view(-1).eq(y).float()
+            else:
+                hit = p.argmax(1).eq(y).float()
+            total_correct += (hit * batch_weights).sum().item()
+            total += batch_weights.sum().item()
+            correct.index_add_(0, y.cpu(), (hit * batch_weights).cpu())
+            count.index_add_(0, y.cpu(), batch_weights.cpu())
+    network.train()
+
+    per_class = [round((c / n).item(), 5) if n > 0 else None
+                 for c, n in zip(correct, count)]
+    return total_correct / total, per_class

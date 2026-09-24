@@ -48,6 +48,8 @@ if __name__ == "__main__":
         help="For domain adaptation, % of test to use unlabeled for training.")
     parser.add_argument('--skip_model_save', action='store_true')
     parser.add_argument('--save_model_every_checkpoint', action='store_true')
+    parser.add_argument('--eval_train_in', action='store_true',
+        help='Also evaluate train-env in-splits (not needed for training-domain validation).')
     args = parser.parse_args()
 
     # If we ever want to implement checkpointing, just persist these values
@@ -237,8 +239,19 @@ if __name__ == "__main__":
                 results[key] = np.mean(val)
 
             evals = zip(eval_loader_names, eval_loaders, eval_weights)
+            test_in_names = ['env{}_in'.format(i) for i in args.test_envs]
             for name, loader, weights in evals:
-                acc = misc.accuracy(algorithm, loader, weights, device)
+                # Training-domain validation only needs train-env *out* splits and the
+                # test env; train-env *in* splits are skipped unless requested.
+                if (not args.eval_train_in) and name.endswith('_in') \
+                        and name not in test_in_names:
+                    continue
+                if name in test_in_names:
+                    acc, per_class = misc.accuracy_per_class(
+                        algorithm, loader, weights, device, dataset.num_classes)
+                    results[name+'_pc'] = per_class
+                else:
+                    acc = misc.accuracy(algorithm, loader, weights, device)
                 results[name+'_acc'] = acc
 
             results['mem_gb'] = torch.cuda.max_memory_allocated() / (1024.*1024.*1024.)

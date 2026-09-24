@@ -1,5 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
+import os
+import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -2562,9 +2564,21 @@ class ADRMX(Algorithm):
 
 class SODA(Algorithm):
     """
-    (High-Performance Version using geomloss)
-    This version uses the geomloss library, which is highly optimized for GPU
-    execution, to solve the performance bottleneck of the POT-based implementation.
+    SODA: align each source domain's L2-normalized features to a pivot with entropic OT
+    (GeomLoss, cost 1/2||x-y||^2, epsilon = blur^2).
+
+    hparams
+      pivot            "dfr"           FIFO Dynamic Feature Reservoir (the method)
+                       "random_domain" features of one randomly chosen source domain of the
+                                       current batch (Standard Pivot OT)
+                       "pooled"        all source features of the current batch (Pooled-Target OT)
+                       "pairwise"      every pair of source domains (Pairwise OT)
+      class_cond       class-conditional OT against the DFR: block cost (beta/eps = cc_beta_over_eps)
+                       and reservoir marginal reweighted to the source class histogram
+      la_beta_over_eps label-aware cost with uniform marginals (0 = off)
+      probe_every      >0 enables the in-training diagnostics written to <probe_dir>/probe.jsonl
+    All OT variants share the same cost, blur and debias setting. With default hparams this is
+    identical to the original SODA implementation.
     """
     def __init__(self, input_shape, num_classes, num_domains, hparams):
         super(SODA, self).__init__(input_shape, num_classes, num_domains, hparams)
@@ -2572,28 +2586,38 @@ class SODA(Algorithm):
         self.featurizer = networks.Featurizer(input_shape, self.hparams)
         self.classifier = nn.Linear(self.featurizer.n_outputs, num_classes)
         self.network = nn.Sequential(self.featurizer, self.classifier)
+        self.num_classes = num_classes
 
         self.lambda_ce = self.hparams.get("lambda_ce", 1.0)
         self.lambda_ot_align = self.hparams.get("lambda_ot_align", 0.01)
-        self.ot_epsilon = self.hparams.get("ot_epsilon", 0.1)
-        self.ema_momentum = self.hparams.get("ema_momentum", 0.999)
-        self.ema_pivot_size = self.hparams.get("ema_pivot_size", 256)
+        self.ot_epsilon = self.hparams.get("ot_epsilon", 0.1)          # GeomLoss blur
+        self.ema_pivot_size = self.hparams.get("ema_pivot_size", 256)  # K
         self.ot_debias = bool(self.hparams.get("ot_debias", False))
         self.align_start_step = int(self.hparams.get("align_start_step", 0))
+        self.pivot = self.hparams.get("pivot", "dfr")
+        self.pivot_detach = bool(self.hparams.get("pivot_detach", True))
+        self.class_cond = bool(self.hparams.get("class_cond", False))
+        self.cc_beta_over_eps = float(self.hparams.get("cc_beta_over_eps", 50.0))
+        self.la_beta_over_eps = float(self.hparams.get("la_beta_over_eps", 0.0))
+        assert self.pivot in ("dfr", "random_domain", "pooled", "pairwise"), self.pivot
+        assert not (self.class_cond and self.pivot != "dfr"), "class_cond requires pivot=dfr"
+        self.eps = self.ot_epsilon ** 2  # GeomLoss: epsilon = blur^p with p=2
 
-        # --- MODIFICATION: Use geomloss.SamplesLoss ---
-        # This one object handles everything efficiently.
-        # 'blur' is the equivalent of epsilon/regularization.
         self.sinkhorn_loss = geomloss.SamplesLoss(
             loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=self.ot_debias
         )
-        # --- END MODIFICATION ---
 
         self.register_buffer("ema_queue", torch.randn(
             self.ema_pivot_size, self.featurizer.n_outputs
         ))
         self.ema_queue = F.normalize(self.ema_queue, dim=1)
         self.register_buffer("ema_queue_ptr", torch.zeros(1, dtype=torch.long))
+        # Per-entry metadata (label/domain/insertion step/index in its batch); -1 = random init
+        K = self.ema_pivot_size
+        self.register_buffer("queue_labels", -torch.ones(K, dtype=torch.long))
+        self.register_buffer("queue_domains", -torch.ones(K, dtype=torch.long))
+        self.register_buffer("queue_steps", -torch.ones(K, dtype=torch.long))
+        self.register_buffer("queue_bidx", -torch.ones(K, dtype=torch.long))
 
         self.optimizer = torch.optim.Adam(
             self.network.parameters(),
@@ -2602,71 +2626,172 @@ class SODA(Algorithm):
         )
         self.register_buffer("update_count", torch.tensor([0]))
 
+        # Diagnostics (off by default)
+        self.probe_every = int(self.hparams.get("probe_every", 0))
+        self.probe_dense_until = int(self.hparams.get("probe_dense_until", 300))
+        self.probe_dir = self.hparams.get("probe_dir", "")
+        self.dump_stream = bool(self.hparams.get("dump_stream", False))
+        steps = str(self.hparams.get("save_ckpt_steps", ""))
+        self.save_ckpt_steps = set(int(s) for s in steps.split(",") if s.strip())
+        self._input_buffer = OrderedDict()   # step -> CPU fp16 inputs of that batch
+        self._stream = []
+        self._warned_m_over_k = False
+        self._probe_file = None
+        self.input_shape_ = input_shape
+        self.num_domains_ = num_domains
+        if self.probe_every > 0 or self.dump_stream or self.save_ckpt_steps:
+            assert self.probe_dir, "probe_dir must be set when diagnostics are enabled"
+            os.makedirs(self.probe_dir, exist_ok=True)
+
+    # ------------------------------------------------------------------ reservoir
     @torch.no_grad()
-    def _update_ema_queue(self, batch_features):
-        # This function remains the same
+    def _update_ema_queue(self, batch_features, labels=None, domains=None):
         b_size = batch_features.shape[0]
         ptr = int(self.ema_queue_ptr)
+        bidx = torch.arange(b_size, device=batch_features.device)
         if b_size > self.ema_pivot_size:
+            if not self._warned_m_over_k:
+                print(f"WARNING: m={b_size} > K={self.ema_pivot_size}: the reservoir is "
+                      "fully replaced every step (degenerates to a batch pivot).")
+                self._warned_m_over_k = True
             indices = torch.randperm(b_size, device=batch_features.device)[:self.ema_pivot_size]
             b_size = self.ema_pivot_size
             batch_features = batch_features[indices]
+            bidx = bidx[indices]
+            if labels is not None:
+                labels, domains = labels[indices], domains[indices]
+        step = int(self.update_count)
         if ptr + b_size > self.ema_pivot_size:
-            part1_size = self.ema_pivot_size - ptr
-            self.ema_queue[ptr:] = batch_features[:part1_size]
-            part2_size = b_size - part1_size
-            self.ema_queue[:part2_size] = batch_features[part1_size:]
-            ptr = part2_size
+            first = self.ema_pivot_size - ptr
+            slots = torch.cat([torch.arange(ptr, self.ema_pivot_size),
+                               torch.arange(0, b_size - first)]).to(batch_features.device)
         else:
-            self.ema_queue[ptr : ptr + b_size] = batch_features
-            ptr += b_size
-        self.ema_queue_ptr[0] = ptr % self.ema_pivot_size
+            slots = torch.arange(ptr, ptr + b_size, device=batch_features.device)
+        self.ema_queue[slots] = batch_features
+        if labels is not None:
+            self.queue_labels[slots] = labels
+            self.queue_domains[slots] = domains
+        self.queue_steps[slots] = step
+        self.queue_bidx[slots] = bidx
+        self.ema_queue_ptr[0] = (ptr + b_size) % self.ema_pivot_size
 
+    # ------------------------------------------------------------------ OT helpers
+    def _onehot(self, y):
+        """sqrt(beta)*one-hot rows; label -1 (random-init entries) -> zero row."""
+        oh = torch.zeros(y.shape[0], self.num_classes, device=y.device)
+        valid = y >= 0
+        oh[valid] = F.one_hot(y[valid], self.num_classes).float()
+        return oh
+
+    def _augment(self, z, y, beta):
+        # With GeomLoss' 1/2||.||^2 cost, appending sqrt(beta)*e_y adds beta*1[y != y'].
+        return torch.cat([z, (beta ** 0.5) * self._onehot(y)], dim=1)
+
+    def _cc_inputs(self, z, y, q, qy):
+        """Class-conditional OT inputs: keep only classes present on both sides; reservoir
+        weights b_j proportional to p_hat(y_j)/q_hat(y_j) so each class block carries p_hat_c."""
+        present = torch.zeros(self.num_classes, dtype=torch.bool, device=z.device)
+        qvalid = qy >= 0
+        present[qy[qvalid]] = True
+        keep_s = present[y]
+        if keep_s.sum() == 0:
+            return None
+        zs, ys = z[keep_s], y[keep_s]
+        in_src = torch.zeros(self.num_classes, dtype=torch.bool, device=z.device)
+        in_src[ys] = True
+        keep_q = qvalid.clone()
+        keep_q[qvalid] = in_src[qy[qvalid]]
+        qq, qqy = q[keep_q], qy[keep_q]
+        p_hat = torch.bincount(ys, minlength=self.num_classes).float()
+        p_hat = p_hat / p_hat.sum()
+        q_cnt = torch.bincount(qqy, minlength=self.num_classes).float()
+        a = torch.full((zs.shape[0],), 1.0 / zs.shape[0], device=z.device)
+        b = p_hat[qqy] / q_cnt[qqy]
+        b = b / b.sum()
+        beta = self.cc_beta_over_eps * self.eps
+        return a, self._augment(zs, ys, beta), b, self._augment(qq, qqy, beta), ys, qqy
+
+    def _align_to(self, z, y, target, target_y):
+        """OT loss between one source domain (z, y) and a target point cloud."""
+        if self.class_cond:
+            inp = self._cc_inputs(z, y, target, target_y)
+            if inp is None:
+                return None
+            a, xs, b, xt, _, _ = inp
+            return self.sinkhorn_loss(a, xs, b, xt)
+        if self.la_beta_over_eps > 0:
+            beta = self.la_beta_over_eps * self.eps
+            return self.sinkhorn_loss(self._augment(z, y, beta), self._augment(target, target_y, beta))
+        return self.sinkhorn_loss(z, target)
+
+    # ------------------------------------------------------------------ training step
     def update(self, minibatches, unlabeled=None):
         device = next(self.network.parameters()).device
         all_x = torch.cat([x for x, y in minibatches]).to(device)
         all_y = torch.cat([y for x, y in minibatches]).to(device)
+        all_d = torch.cat([torch.full((x.shape[0],), i, dtype=torch.long)
+                           for i, (x, _) in enumerate(minibatches)]).to(device)
         domain_indices_cumsum = torch.cumsum(
             torch.tensor([x.shape[0] for x, _ in minibatches], device=device), dim=0
         )
         domain_starts = torch.cat(
             (torch.tensor([0], device=device), domain_indices_cumsum[:-1])
         )
+        step = int(self.update_count)
 
         features = self.featurizer(all_x)
         logits = self.classifier(features)
         loss_cls = F.cross_entropy(logits, all_y)
 
-        loss_ot_align_accum = 0.0
-        ot_comparisons_count = 0
-        domain_features_list = []
+        doms = []   # (normalized features, labels) per source domain
         for i in range(len(minibatches)):
             start, end = domain_starts[i], domain_indices_cumsum[i]
-            current_domain_features = features[start:end]
-            if current_domain_features.shape[0] > 0:
-                domain_features_list.append(current_domain_features)
-        
-        if len(domain_features_list) > 0 and int(self.update_count) >= self.align_start_step:
-            target_features = self.ema_queue.clone().detach()
+            if end > start:
+                doms.append((F.normalize(features[start:end], dim=1), all_y[start:end]))
 
-            for source_features in domain_features_list:
-                source_features_normalized = F.normalize(source_features, dim=1)
-                
-                # --- MODIFICATION: Use the fast geomloss function ---
-                ot_divergence = self.sinkhorn_loss(source_features_normalized, target_features)
-                # --- END MODIFICATION ---
-                
-                loss_ot_align_accum += ot_divergence
-                ot_comparisons_count += 1
+        # Probes see the reservoir and model exactly as used for this step (before any update)
+        if self._probe_now(step):
+            self._run_probes(step, all_x, features, all_y, doms)
 
-            loss_ot_alignment = (loss_ot_align_accum / ot_comparisons_count) if ot_comparisons_count > 0 \
-                                    else torch.tensor(0.0, device=device)
-        else:
-            loss_ot_alignment = torch.tensor(0.0, device=device)
+        losses = []
+        if len(doms) > 0 and step >= self.align_start_step and self.lambda_ot_align != 0:
+            if self.pivot == "dfr":
+                target = self.ema_queue.clone().detach()
+                target_y = self.queue_labels.clone()
+                for z, y in doms:
+                    l = self._align_to(z, y, target, target_y)
+                    if l is not None:
+                        losses.append(l)
+            elif self.pivot == "pooled":
+                target = torch.cat([z for z, _ in doms])
+                target_y = torch.cat([y for _, y in doms])
+                if self.pivot_detach:
+                    target = target.detach()
+                for z, y in doms:
+                    losses.append(self._align_to(z, y, target, target_y))
+            elif self.pivot == "random_domain" and len(doms) > 1:
+                j = int(torch.randint(len(doms), (1,)))
+                target, target_y = doms[j]
+                if self.pivot_detach:
+                    target = target.detach()
+                for i, (z, y) in enumerate(doms):
+                    if i != j:
+                        losses.append(self._align_to(z, y, target, target_y))
+            elif self.pivot == "pairwise":
+                for (zi, yi), (zj, yj) in combinations(doms, 2):
+                    losses.append(self._align_to(zi, yi, zj, yj))
+        loss_ot_alignment = torch.stack(losses).mean() if losses \
+            else torch.tensor(0.0, device=device)
 
-        all_batch_features = F.normalize(features.detach(), dim=1)
-        self._update_ema_queue(all_batch_features)
-        
+        self._update_ema_queue(F.normalize(features.detach(), dim=1), all_y, all_d)
+        if self.probe_every > 0:
+            self._input_buffer[step] = all_x.detach().to("cpu", torch.float16)
+            max_age = -(-self.ema_pivot_size // all_x.shape[0])  # ceil(K/m)
+            while len(self._input_buffer) > max_age + 1:
+                self._input_buffer.popitem(last=False)
+        if self.dump_stream:
+            self._dump_stream(step, features, all_y, all_d)
+
         total_loss = self.lambda_ce * loss_cls + self.lambda_ot_align * loss_ot_alignment
 
         self.optimizer.zero_grad()
@@ -2674,8 +2799,154 @@ class SODA(Algorithm):
         self.optimizer.step()
         self.update_count += 1
 
-        return {"loss": total_loss.item(), "loss_cls": loss_cls.item(), "loss_ot_align": loss_ot_alignment.item()}
+        if (step + 1) in self.save_ckpt_steps:
+            self._save_ckpt(step + 1)
+
+        return {"loss": total_loss.item(), "loss_cls": loss_cls.item(),
+                "loss_ot_align": loss_ot_alignment.item(),
+                "m_over_K": all_x.shape[0] / self.ema_pivot_size}
 
     def predict(self, x):
         return self.network(x)
 
+    # ------------------------------------------------------------------ diagnostics
+    def _probe_now(self, step):
+        if self.probe_every <= 0:
+            return False
+        return step <= self.probe_dense_until or step % self.probe_every == 0
+
+    def _encode_like_training(self, x):
+        """Encode x as one batch in train mode (batch-stat BN, as in training) without
+        changing BN running statistics, with dropout off."""
+        saved = []
+        for m in self.featurizer.modules():
+            if isinstance(m, nn.modules.batchnorm._BatchNorm):
+                saved.append((m, m.momentum))
+                m.momentum = 0.0
+            elif isinstance(m, nn.Dropout):
+                saved.append((m, None))
+                m.eval()
+        try:
+            with torch.no_grad():
+                z = F.normalize(self.featurizer(x), dim=1)
+        finally:
+            for m, mom in saved:
+                if mom is None:
+                    m.train()
+                else:
+                    m.momentum = mom
+        return z
+
+    @torch.no_grad()
+    def _plan_stats(self, z, y, target, target_y):
+        """Entropic plan of the loss actually used (uniform, LA or CC) via dual potentials."""
+        if self.class_cond:
+            inp = self._cc_inputs(z, y, target, target_y)
+            if inp is None:
+                return None
+            a, xs, b, xt, ys, yt = inp
+        else:
+            beta = self.la_beta_over_eps * self.eps
+            xs = self._augment(z, y, beta) if beta > 0 else z
+            xt = self._augment(target, target_y, beta) if beta > 0 else target
+            a = torch.full((xs.shape[0],), 1.0 / xs.shape[0], device=z.device)
+            b = torch.full((xt.shape[0],), 1.0 / xt.shape[0], device=z.device)
+            ys, yt = y, target_y
+        pot = geomloss.SamplesLoss(loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=False,
+                                   potentials=True, backend="tensorized")
+        Fp, Gp = pot(a, xs, b, xt)
+        C = 0.5 * torch.cdist(xs, xt) ** 2
+        logpi = torch.log(a)[:, None] + torch.log(b)[None, :] + (Fp[:, None] + Gp[None, :] - C) / self.eps
+        pi = logpi.exp()
+        marg_err = (pi.sum(1) - a).abs().sum().item() + (pi.sum(0) - b).abs().sum().item()
+        cross = (ys[:, None] != yt[None, :]).float()
+        rho = (pi * cross).sum().item()
+        p = torch.bincount(ys, minlength=self.num_classes).float(); p = p / p.sum()
+        q = torch.zeros(self.num_classes, device=z.device).index_add_(0, yt, b)
+        q = q / q.sum()
+        return {"rho": rho, "rho_min": 0.5 * (p - q).abs().sum().item(),
+                "rho_ind": 1.0 - (p * q).sum().item(), "marg_err": marg_err,
+                "plan_entropy": -(pi * logpi.clamp(min=-1e4)).sum().item()}
+
+    def _run_probes(self, step, all_x, features, all_y, doms):
+        rec = {"step": step}
+        target = self.ema_queue.clone()
+        target_y = self.queue_labels.clone()
+        filled = bool((self.queue_steps >= 0).all())
+        rec["queue_filled"] = filled
+        rec["queue_age_mean"] = float((step - self.queue_steps.float()).mean()) if filled else None
+
+        # (E6a) cross-class transport mass of the plan actually used, vs TV floor
+        if self.pivot == "dfr" and filled:
+            stats = [self._plan_stats(z.detach(), y, target, target_y) for z, y in doms]
+            stats = [s for s in stats if s is not None]
+            for k in ("rho", "rho_min", "rho_ind", "marg_err", "plan_entropy"):
+                rec[k] = sum(s[k] for s in stats) / max(len(stats), 1)
+
+        # (E4) staleness: re-encode the stored batches with the current model
+        if self.pivot == "dfr" and filled and len(self._input_buffer) > 0:
+            device = features.device
+            fresh = target.clone()
+            has_fresh = torch.zeros(target.shape[0], dtype=torch.bool, device=device)
+            for s, x_cpu in self._input_buffer.items():
+                slots = (self.queue_steps == s).nonzero(as_tuple=True)[0]
+                if slots.numel() == 0:
+                    continue
+                z_s = self._encode_like_training(x_cpu.to(device, torch.float32))
+                fresh[slots] = z_s[self.queue_bidx[slots]]
+                has_fresh[slots] = True
+            disp = (target - fresh).norm(dim=1)
+            ages = step - self.queue_steps
+            rec["stale_frac_covered"] = has_fresh.float().mean().item()
+            rec["disp_mean"] = disp[has_fresh].mean().item() if has_fresh.any() else None
+            rec["disp_by_age"] = {int(a): disp[(ages == a) & has_fresh].mean().item()
+                                  for a in ages[has_fresh].unique().tolist()}
+            z0 = self._encode_like_training(all_x)
+            rec["disp_floor_age0"] = (F.normalize(features.detach(), dim=1) - z0).norm(dim=1).mean().item()
+            # loss / gradient change from staleness, source batch fixed (bound uses L_c=2 for 1/2||.||^2)
+            gaps, cosines = [], []
+            for z, y in doms:
+                zs = z.detach().clone().requires_grad_(True)
+                with torch.enable_grad():
+                    l_old = self._align_to(zs, y, target, target_y)
+                    if l_old is None:
+                        continue
+                    g_old, = torch.autograd.grad(l_old, zs)
+                    zs2 = z.detach().clone().requires_grad_(True)
+                    l_new = self._align_to(zs2, y, fresh, target_y)
+                    if l_new is None:
+                        continue
+                    g_new, = torch.autograd.grad(l_new, zs2)
+                gaps.append(abs(l_old.item() - l_new.item()))
+                cosines.append(F.cosine_similarity(g_old.flatten(), g_new.flatten(), dim=0).item())
+            rec["loss_gap"] = sum(gaps) / max(len(gaps), 1)
+            rec["loss_gap_bound"] = 2.0 * disp.mean().item()
+            rec["grad_cos_stale_vs_fresh"] = sum(cosines) / max(len(cosines), 1)
+
+        if self._probe_file is None:
+            self._probe_file = open(os.path.join(self.probe_dir, "probe.jsonl"), "a")
+        self._probe_file.write(json.dumps(rec) + "\n")
+        self._probe_file.flush()
+
+    def _dump_stream(self, step, features, all_y, all_d):
+        self._stream.append((step, F.normalize(features.detach(), dim=1).half().cpu(),
+                             all_y.cpu(), all_d.cpu()))
+        if step % 100 == 0:
+            torch.save({"step": step, "queue": self.ema_queue.half().cpu(),
+                        "labels": self.queue_labels.cpu(), "steps": self.queue_steps.cpu(),
+                        "ptr": int(self.ema_queue_ptr)},
+                       os.path.join(self.probe_dir, f"queue_{step:05d}.pt"))
+        if len(self._stream) >= 500:
+            first = self._stream[0][0]
+            torch.save(self._stream, os.path.join(self.probe_dir, f"stream_{first:05d}.pt"))
+            self._stream = []
+
+    def _save_ckpt(self, step):
+        torch.save({"step": step, "hparams": self.hparams, "input_shape": self.input_shape_,
+                    "num_classes": self.num_classes, "num_domains": self.num_domains_,
+                    "state_dict": self.state_dict()},
+                   os.path.join(self.probe_dir, f"ckpt_step{step:05d}.pt"))
+        if self._stream:  # flush partial stream chunk at checkpoints
+            first = self._stream[0][0]
+            torch.save(self._stream, os.path.join(self.probe_dir, f"stream_{first:05d}.pt"))
+            self._stream = []
