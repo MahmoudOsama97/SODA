@@ -2857,9 +2857,29 @@ class SODA(Algorithm):
         Fp, Gp = pot(a, xs, b, xt)
         Fp, Gp = Fp.reshape(-1), Gp.reshape(-1)  # GeomLoss returns (N,1)/(M,1)
         C = 0.5 * torch.cdist(xs, xt) ** 2
-        logpi = torch.log(a)[:, None] + torch.log(b)[None, :] + (Fp[:, None] + Gp[None, :] - C) / self.eps
-        pi = logpi.exp()
-        marg_err = (pi.sum(1) - a).abs().sum().item() + (pi.sum(0) - b).abs().sum().item()
+        la, lb = torch.log(a), torch.log(b)
+
+        def plan(f, g):
+            lp = la[:, None] + lb[None, :] + (f[:, None] + g[None, :] - C) / self.eps
+            p_ = lp.exp()
+            return lp, p_, (p_.sum(1) - a).abs().sum().item() + (p_.sum(0) - b).abs().sum().item()
+
+        # GeomLoss' epsilon-scaling does ~one Sinkhorn update per scale, so the plan behind the
+        # training loss is not converged; record its marginal error, then converge (warm-started
+        # log-domain Sinkhorn) to measure the entropic plan itself.
+        _, _, marg_err_geomloss = plan(Fp, Gp)
+        # Sanity check of the potential convention: for debias=False GeomLoss' value is <a,F>+<b,G>
+        val = geomloss.SamplesLoss(loss="sinkhorn", p=2, blur=self.ot_epsilon, debias=False,
+                                   backend="tensorized")(a, xs, b, xt).item()
+        dual_gap = abs(val - ((a * Fp).sum() + (b * Gp).sum()).item())
+        for it in range(5000):
+            Fp = -self.eps * torch.logsumexp(lb[None, :] + (Gp[None, :] - C) / self.eps, dim=1)
+            Gp = -self.eps * torch.logsumexp(la[:, None] + (Fp[:, None] - C) / self.eps, dim=0)
+            if it % 25 == 24:
+                logpi, pi, marg_err = plan(Fp, Gp)
+                if marg_err < 1e-4:
+                    break
+        logpi, pi, marg_err = plan(Fp, Gp)
         cross = (ys[:, None] != yt[None, :]).float()
         rho = (pi * cross).sum().item()
         p = torch.bincount(ys, minlength=self.num_classes).float(); p = p / p.sum()
@@ -2867,6 +2887,8 @@ class SODA(Algorithm):
         q = q / q.sum()
         return {"rho": rho, "rho_min": 0.5 * (p - q).abs().sum().item(),
                 "rho_ind": 1.0 - (p * q).sum().item(), "marg_err": marg_err,
+                "marg_err_geomloss": marg_err_geomloss, "sinkhorn_iters_to_converge": it + 1,
+                "geomloss_dual_gap": dual_gap,
                 "plan_entropy": -(pi * logpi.clamp(min=-1e4)).sum().item()}
 
     def _run_probes(self, step, all_x, features, all_y, doms):
@@ -2881,7 +2903,8 @@ class SODA(Algorithm):
         if self.pivot == "dfr" and filled:
             stats = [self._plan_stats(z.detach(), y, target, target_y) for z, y in doms]
             stats = [s for s in stats if s is not None]
-            for k in ("rho", "rho_min", "rho_ind", "marg_err", "plan_entropy"):
+            for k in ("rho", "rho_min", "rho_ind", "marg_err", "marg_err_geomloss",
+                      "sinkhorn_iters_to_converge", "geomloss_dual_gap", "plan_entropy"):
                 rec[k] = sum(s[k] for s in stats) / max(len(stats), 1)
 
         # (E4) staleness: re-encode the stored batches with the current model
