@@ -1,0 +1,110 @@
+\documentclass[11pt]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{parskip}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{revcol}{HTML}{3a3a3a}
+\newenvironment{comment}{\par\medskip\noindent\begin{minipage}{\linewidth}\color{revcol}\itshape}{\end{minipage}\par\smallskip}
+\newcommand{\resp}{\noindent\textbf{Response.} }
+\newcommand{\chg}{\noindent\textbf{Changes.} }
+
+\begin{document}
+
+\noindent Manuscript CVIU-25-2917\\
+\textbf{SODA: Stabilized Optimal Transport Based Domain Alignment for Domain Generalization via a Dynamic Feature Reservoir}
+
+\bigskip
+\noindent Dear Prof.\ Sebe,
+
+\noindent We thank you and the two reviewers for the careful reading of our manuscript. The comments identified errors in our theoretical statements and gaps in the analysis, and addressing them has improved the paper. We respond to each comment below, in the reviewers' numbering, and state where each change appears. All changes are marked in the marked-up version of the manuscript.
+
+\noindent \textbf{Summary of the main changes.}
+\begin{itemize}
+  \item Terminology: the loss is now called the entropic OT cost, and we state that our implementation does not use the debiased Sinkhorn divergence (Reviewer~2, Comment~1).
+  \item Corrected gradient in Eq.~(22) and corrected sample-complexity bound in Eq.~(29) (Reviewer~2, Comments~1 and~2).
+  \item Proposition~3.3 restated with a formal proof, and Figure~5 replaced by an exact $W_2$ measurement (Reviewer~2, Comment~3).
+  \item The ``$3\times$ variance reduction'' and ``$16\times$'' claims removed; a direct measurement of the gradient variance added as Table~13 (Reviewer~2, Comment~4).
+  \item New analyses of staleness (Proposition~3.5 and Section~4.7), of scalability (Section~3.6 and Table~3), of class imbalance (Section~4.5.3) and of a class-conditional reservoir (Section~4.3.1) (Reviewer~1, Comments~1--3; Reviewer~2, Comment~5).
+\end{itemize}
+\noindent Page numbers refer to the clean revised manuscript. Because a new table (Table~3) was added in Section~3.6, all subsequent tables are renumbered by one: Tables~8 and~11 of the submitted version are Tables~9 and~12 of the revision. No accuracy result reported in the submitted version has changed.
+
+\bigskip
+\section*{Reviewer 1}
+
+\begin{comment}
+1. The reservoir contains temporally heterogeneous and potentially stale features. Although higher entropic regularization is argued to mitigate this issue, there is no principled analysis or empirical study quantifying bias introduced by outdated representations, especially in early or rapidly changing training phases.
+\end{comment}
+
+\resp We agree that the argument based on entropic regularization was not supported, and we have replaced it with an analysis and a measurement. Because the reservoir is a FIFO queue that receives $B$ features per step, no entry is older than $A=\lceil K/B\rceil$ steps (6 steps for $K=512$). The new Proposition~3.5 bounds the change of the alignment loss caused by stale entries by the displacement of those entries, and hence by $A$ times the per-step feature drift. To measure this bias, we kept the input images of the batches still stored in the reservoir during training on OfficeHome (all four test domains) and re-encoded them with the current model, at every step during the first 300 steps and every 50 steps afterwards. Without dropout, the mean displacement between stored and re-encoded features is $0.07$ in the first 300 steps and $0.025$ after step 1,000; the resulting change of the loss ($0.003$ and $0.001$) is about 50 times below the bound, and the gradients computed with the stored and with the re-encoded reservoir have cosine similarity $0.994$--$0.998$. With dropout $0.5$, the displacement equals that of the current batch re-encoded without dropout, so staleness adds almost nothing to the noise from dropout. Staleness is therefore small throughout training, including the early phase.
+
+\chg Section~3.2.4 (end, p.~13): the unsupported claim that a higher $\epsilon$ mitigates staleness is replaced by a pointer to the new analysis. Section~3.4.5 (p.~17): new Proposition~3.5 (Staleness bias) with proof. Section~4.7 (p.~35): new paragraph ``Staleness'' with the measurements above.
+
+\begin{comment}
+2. Computational and memory overhead is under-discussed. The paper does not provide detailed analysis of scalability with respect to reservoir size, feature dimension, or number of domains.
+\end{comment}
+
+\resp We agree and have added this analysis. The alignment term solves one $B\times K$ transport problem per source domain, so its cost is $\mathcal O(NBK(d'+L))$ per step with the tensorized GeomLoss backend, where $L$ is the number of Sinkhorn updates. We measured it on an NVIDIA L40S for $K\in\{128,\dots,4096\}$, $d'\in\{512,2048\}$ and $N\in\{2,3,5\}$. The time grows linearly with the number of source domains, about 4\,ms per domain, and is nearly independent of $K$ and $d'$ in this range because the GPU is limited by kernel launches at these sizes. Peak memory grows linearly with $Kd'$ and stays below 0.3\,GB at $K=4096$. Over a full training step on OfficeHome, the alignment term adds 7\% to the time and a negligible amount of memory. While preparing this analysis we also corrected the description of the solver: GeomLoss' $\epsilon$-scaling performs 7 Sinkhorn updates at $\epsilon=0.01$, not the 20 iterations stated in the submitted version.
+
+\chg Section~3.6.1 (p.~20): new paragraph on scaling in $N$, $K$ and $d'$, and new Table~3 with the measured time and memory. Section~4.1.3 (p.~24): number of Sinkhorn updates corrected. Table~6 and its paragraph (p.~25, formerly Table~5): the timing is re-measured on the hardware used for this revision (NVIDIA L40S): 0.181\,s versus 0.193\,s per step (+7\%), 8.14 versus 8.15\,GB, replacing the earlier A100 measurement.
+
+\begin{comment}
+3. The method implicitly assumes that the reservoir adequately represents all semantic classes across domains. In practice, class imbalance or domain-specific label sparsity could bias the pivot distribution, potentially harming minority classes. This issue is neither theoretically addressed nor empirically evaluated.
+\end{comment}
+
+\resp We agree that this needed to be addressed. The reservoir's class histogram follows the class frequencies of recent source batches: a class with frequency $\pi_c$ has on average $K\pi_c$ entries and is absent with probability about $(1-\pi_c)^K$, so rare classes are under-represented in the pivot. To test whether this harms them, we compared the per-class test recall of SODA with that of the same model trained without the alignment term, over 10 seeds, and related the difference to the class frequency in the source domains. On TerraIncognita, whose class distribution is strongly imbalanced, the change in recall is unrelated to class frequency (Spearman $\rho=0.02$, $p=0.92$), and the rarest 20\% of classes gain as much as the most frequent 20\% ($+0.9$ points each). PACS and VLCS show no significant relation either. On OfficeHome the gain is slightly larger for frequent classes (under 1 point). On every dataset the class-balanced accuracy of the two models differs by less than 0.2 points. We also evaluated a class-conditional reservoir (see our response to Reviewer~2, Comment~5).
+
+\chg Section~4.5.3 ``Class Imbalance'' (p.~33): new subsection with this analysis.
+
+\bigskip
+\section*{Reviewer 2}
+
+\begin{comment}
+1. The definition and use of ``Sinkhorn divergence'' should be carefully revisited. [\dots] the formulation in Eq.~(14) seems closer to an entropically regularized OT cost rather than the debiased Sinkhorn divergence. Since the experiments are implemented using GeomLoss, the authors should clearly specify whether the actual implementation uses the regularized OT cost or the debiased Sinkhorn divergence. If the theoretical formulation and implementation are inconsistent, the related derivations and analysis, including Eqs.~(22) and~(29), should be revised accordingly.
+\end{comment}
+
+\resp The reviewer is right: Eq.~(14) is the entropic OT cost, and calling it the Sinkhorn divergence was incorrect. Our implementation uses GeomLoss with \texttt{debias=False}, i.e.\ the entropic OT cost of Eq.~(14) without the self-transport terms, so the formulation and the implementation agree and only the terminology was wrong. We now define $W_\epsilon$ as the entropic OT cost, define the debiased Sinkhorn divergence $S_\epsilon$ separately, and state the GeomLoss settings (ground cost $\tfrac12\|x-y\|^2$, $\epsilon=\texttt{blur}^2$) and their correspondence with Eq.~(14). We also trained SODA with $S_\epsilon$ instead of $W_\epsilon$ on OfficeHome: both losses give 70.8\% over the same three seeds, so the choice does not affect our conclusions. Eq.~(22) is corrected as described in our response to Comment~2. Eq.~(29) now states the bound of Genevay et al.\ with its dependence on $\epsilon$ and $d$, notes that it holds for both the entropic OT cost and the Sinkhorn divergence, and no longer claims that the variance of the estimate is controlled by $K$; the effect of $K$ on the gradient is measured directly instead (Table~13).
+
+\chg Section~3.2.2 (p.~12): definition of $W_\epsilon$ as the entropic OT cost, of $S_\epsilon$, and of the implementation. Section~3.2.3 (p.~12): wording. Section~3.4.4, Eq.~(29) and the following paragraph (p.~17). Abstract, Section~4.3.2 (p.~30) and Section~4.7 (p.~35): ``Sinkhorn divergence'' replaced where it referred to our loss.
+
+\begin{comment}
+2. The gradient expression in Eq.~(22) appears questionable and should be re-derived. [\dots] the gradient with respect to a source feature $z_i$, under a fixed optimal transport plan and by the envelope theorem, would normally be proportional to $2\sum_j T^*_{ij}(z_i-z'_j)$. However, Eq.~(22) introduces an additional factor of $1/\epsilon$. [\dots] The authors should carefully re-derive Eq.~(22) and distinguish between the effect of $\epsilon$ on the transport plan itself and a possible explicit scaling of the gradient magnitude.
+\end{comment}
+
+\resp We thank the reviewer for catching this error. Because the transport polytope does not depend on the support points and the entropic problem has a unique solution, the envelope theorem gives $\nabla_{z_i}W_\epsilon=2\sum_jT^*_{ij}(z_i-z'_j)=2a_i(z_i-\hat z_i)$, where $\hat z_i$ is the barycentre of the target points matched to $z_i$; there is no $1/\epsilon$ factor. We have removed the statement that a smaller $\epsilon$ produces larger gradients. The revised text explains that $\epsilon$ acts only through the plan: a small $\epsilon$ concentrates each row of the plan on a few nearby target points, a large $\epsilon$ spreads it over many, and as $\epsilon\to\infty$ the gradient only matches means. For unit-norm features the gradient norm is at most $4a_i$ for every $\epsilon$.
+
+\chg Section~3.2.3, Eq.~(22) and the paragraph after it (p.~12--13).
+
+\begin{comment}
+3. Proposition 3.3 requires a more rigorous justification. [\dots] this linear scaling is not immediately obvious for the Wasserstein-2 distance used in Definition~3.1. If only a fraction $B/K$ of the probability mass is replaced between two consecutive reservoirs, a bound on the squared Wasserstein distance may be easier to establish, while the Wasserstein distance itself may exhibit a different scaling behavior. The authors should provide a formal proof together with the required assumptions [\dots].
+\end{comment}
+
+\resp The reviewer is right that the linear scaling does not hold for $W_2$. We have restated Proposition~3.3 and added a proof. For consecutive reservoirs of unit-norm features that differ in $B$ of $K$ rows, the coupling that keeps the shared rows in place gives $W_p\le2(B/K)^{1/p}$ for every $p\ge1$. Hence $W_2\le2\sqrt{B/K}$, and $W_2^2$ scales linearly in $B/K$, as the reviewer anticipated; $W_1\le2B/K$, and the change of the alignment loss between consecutive steps is at most $4B/K$. Both bounds on $W_p$ are attained. The assumptions (unit-norm features, FIFO replacement of $B$ rows) are stated in the proposition. We removed the comparison with $\mathcal S_{\text{batch}}$ and the resulting ``$16\times$'' figure, which relied on the incorrect linear scaling. We also corrected the numerical example: Algorithm~1 inserts all features of the minibatch, 96 per step for three source domains with 32 images each, so the bound is $0.87$ for $K=512$. To support the proposition empirically, Figure~5 now shows the exact $W_2$ distance between consecutive pivots, computed from the features logged during training. The drift of the DFR equals $1.13\sqrt{B/K}$ for every $K$ tested, below the bound, while a batch-derived pivot drifts by $1.13$ and a freshly drawn pivot of the same size drifts almost as much. This shows that the stability comes from the overlap of consecutive reservoirs.
+
+\chg Section~3.4.2, Proposition~3.3 with proof and the paragraph after it (pp.~15--16). Figure~5, its caption and Section~4.7 (pp.~34--36). Section~4.3.2 (p.~30): fraction of the reservoir replaced per step corrected to 18.75\%. Conclusion (p.~36): ``$16\times$'' removed.
+
+\begin{comment}
+4. The claim of a ``3$\times$ variance reduction'' is not sufficiently supported by the current statistical evaluation. [\dots] a threefold reduction in standard error is not equivalent to a threefold reduction in variance. [\dots] three runs are insufficient to robustly support optimization-stability claims. I recommend increasing the number of random seeds, for example to 5--10, and reporting mean, standard deviation, and confidence intervals. It would also be valuable to directly measure the variance of the alignment gradients rather than using final accuracy variation as the only proxy for optimization stability.
+\end{comment}
+
+\resp We agree with both points: a ratio of standard errors is not a ratio of variances, and three runs cannot support a claim about variance. We have removed the ``$3\times$ variance reduction'' claim from the abstract, the contributions, the results, the summary and the conclusion. Table~12 (formerly Table~11) now states that its values are standard errors over three runs, and the text notes that this comparison is only indicative. We did not base the stability claim on additional accuracy runs: as the reviewer notes, final accuracy is an indirect proxy, and with ten runs per method a difference in standard deviation smaller than about a factor of two cannot be detected reliably. Instead, we followed the reviewer's suggestion and measured the variance of the alignment gradient directly. At SODA checkpoints after 500, 1,000, 2,500 and 5,000 steps, we fixed 16 source minibatches and, for each, drew 16 pivots independently of the source batch, which isolates the pivot-induced part of the gradient variance. Relative to the squared norm of the mean gradient, a reservoir of $K=512$ reduces this variance by a factor of 4 to 9 for the gradient with respect to the features and by 6 to 29 for the last ResNet stage, compared with batch-derived pivots, and the variance decreases roughly as $1/K$ (new Table~13). With batch-derived pivots the variation of the gradient across pivots is larger than its mean.
+
+\chg Table~12 and its caption (p.~31). Section~4.4 (pp.~31--32): revised discussion, new paragraph ``Gradient variance'' and new Table~13. Section~4.3.1 (p.~28): wording on standard errors. Abstract (p.~1), contributions (p.~3), Summary item~2 (p.~36) and Conclusion (p.~36): the $3\times$ claim replaced by the measured gradient-variance reduction.
+
+\begin{comment}
+5. The class-agnostic design of the DFR may introduce undesirable cross-class transport. [\dots] I therefore suggest evaluating a class-conditional DFR or a label-aware OT formulation and comparing it with the current global reservoir.
+\end{comment}
+
+\resp We evaluated a class-conditional variant as suggested. It keeps the same FIFO reservoir but assigns a prohibitive cost to pairs of features with different labels and reweights the reservoir marginal to the class histogram of the source batch, so that the loss becomes $\sum_c\hat p_cW_\epsilon(\alpha_c,\beta_c)$ over the classes present in both. We chose this construction over separate per-class queues because those would hold only about eight entries per class on OfficeHome with $K=512$. Over the same three seeds, the class-conditional variant reaches 70.9\% on OfficeHome against 70.8\% for the class-agnostic reservoir. To understand why class conditioning does not help, we measured the cross-class transport directly from the entropic plans. In the class-agnostic plan, 0.61--0.62 of the mass is transported between different classes. Any feasible plan must move at least 0.60--0.61, because the class histograms of a 32-sample batch and of the reservoir differ, and an independent coupling would move 0.98. Only about 1\% of the mass therefore crosses classes beyond what the class histograms force. The per-class analysis in our response to Reviewer~1, Comment~3 also shows no systematic harm to minority classes.
+
+\chg Section~4.3.1 (p.~28): new paragraph ``Class-conditional reservoir''. Section~4.5.3 (p.~33): per-class analysis.
+
+\bigskip
+\noindent We hope that the revised manuscript addresses the reviewers' concerns, and we thank them again for their constructive comments.
+
+\medskip
+\noindent Sincerely,\\
+Mahmoud Soliman, on behalf of all authors
+
+\end{document}
