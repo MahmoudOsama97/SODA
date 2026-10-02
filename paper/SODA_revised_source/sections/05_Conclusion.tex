@@ -1,0 +1,10 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+This paper addressed a fundamental challenge in Optimal Transport-based domain generalization: the instability of the alignment target. We demonstrated that batch-derived pivots create inconsistent optimization landscapes that hinder learning of domain-invariant representations. To resolve this, we introduced SODA, which stabilizes alignment through the Dynamic Feature Reservoir (DFR). The DFR serves as a high-capacity, non-parametric pivot that decouples the alignment target's sample size from the training batch size, which bounds the drift of the pivot by $2\sqrt{B/K}$ and reduces the pivot-induced variance of the alignment gradient by a factor of 4 to 9 compared with batch-derived pivots.
+
+Extensive experiments across seven benchmarks validated our approach: SODA achieves the highest average accuracy (66.5\%) among 27 compared methods, with state-of-the-art results on OfficeHome (71.7\%) and DomainNet (45.9\%). The consistent cross-benchmark performance demonstrates that pivot stability is a key factor for effective geometric alignment in domain generalization.
+
+\textbf{Limitations.} SODA's global distribution alignment is less effective for location-conditioned shifts (TerraIncognita) where local feature preservation may be important, and provides diminishing returns on subtle domain shifts (VLCS). The class-agnostic DFR cannot disentangle class-domain correlations present in some benchmarks.
+
+\textbf{Future Work.} Promising extensions include: (1) class-aware reservoirs for datasets with many rare classes, (2) combining SODA with optimization-based methods like Sharpness-Aware Minimization to jointly stabilize feature geometry and loss landscape, and (3) theoretical analysis of effective sample size under temporal correlation in the reservoir.

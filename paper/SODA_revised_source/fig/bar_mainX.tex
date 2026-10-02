@@ -1,0 +1,154 @@
+
+% --- Preamble: Define all your custom plot styles here ---
+\pgfplotsset{
+    % --- Individual bar color styles ---
+    erm bar/.style={fill=gray!60, draw=gray!80},
+    mldg bar/.style={fill=red!40, draw=red!80},
+    gsam bar/.style={fill=green!50, draw=green!80},
+    miro bar/.style={fill=purple!40, draw=purple!80},
+    madg bar/.style={fill=cyan!40, draw=cyan!80},
+    sagm bar/.style={fill=magenta!50, draw=magenta!80},
+    ddn bar/.style={fill=teal!40, draw=teal!80},
+    gga bar/.style={fill=lime!60, draw=lime!80},
+    soda bar/.style={fill=orange!80, draw=orange!90},
+    % --- Common style for all subplots in this figure ---
+    multiplot style/.style={
+        width=\linewidth,
+        height=5.5cm,
+        ybar, % <-- FIX: Moved ybar to the main axis style
+        bar width=5pt, % <-- FIX: Moved bar width here as well
+        xtick=\empty,
+        ymajorgrids=true,
+        grid style=dashed,
+        nodes near coords,
+        nodes near coords align={above},
+        every node near coord/.append style={font=\tiny, rotate=90, anchor=west},
+        enlarge x limits=0.5,
+    }
+}
+\begin{figure*}[htbp]
+    \centering
+    
+    % --- Row 1 of Subfigures ---
+    \begin{subfigure}{0.48\textwidth}
+        \begin{tikzpicture}
+            \begin{axis}[multiplot style, title={(a) PACS}, ymin=84, ymax=89]
+                \addplot[erm bar] coordinates {(1, 84.2)};
+                \addplot[mldg bar] coordinates {(2, 84.9)};
+                \addplot[gsam bar] coordinates {(3, 85.9)};
+                \addplot[miro bar] coordinates {(4, 85.4)};
+                \addplot[madg bar] coordinates {(5, 86.5)};
+                \addplot[sagm bar] coordinates {(6, 86.6)};
+                \addplot[ddn bar] coordinates {(7, 87.2)};
+                \addplot[gga bar] coordinates {(8, 87.3)};
+                \addplot[soda bar] coordinates {(9, 86.5)};
+            \end{axis}
+        \end{tikzpicture}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \begin{tikzpicture}
+            \begin{axis}[multiplot style, title={(b) VLCS}, ymin=77, ymax=81]
+                \addplot[erm bar] coordinates {(1, 77.3)};
+                \addplot[mldg bar] coordinates {(2, 77.2)};
+                \addplot[gsam bar] coordinates {(3, 79.1)};
+                \addplot[miro bar] coordinates {(4, 79.0)};
+                \addplot[madg bar] coordinates {(5, 78.7)};
+                \addplot[sagm bar] coordinates {(6, 80.0)};
+                \addplot[ddn bar] coordinates {(7, 80.3)};
+                \addplot[gga bar] coordinates {(8, 79.9)};
+                \addplot[soda bar] coordinates {(9, 78.7)};
+            \end{axis}
+        \end{tikzpicture}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \begin{tikzpicture}
+            \begin{axis}[multiplot style, title={(c) OfficeHome}, ymin=66.5, ymax=73]
+                \addplot[erm bar] coordinates {(1, 67.6)};
+                \addplot[mldg bar] coordinates {(2, 66.8)};
+                \addplot[gsam bar] coordinates {(3, 69.3)};
+                \addplot[miro bar] coordinates {(4, 70.5)};
+                \addplot[madg bar] coordinates {(5, 71.3)};
+                \addplot[sagm bar] coordinates {(6, 70.1)};
+                \addplot[ddn bar] coordinates {(7, 69.5)};
+                \addplot[gga bar] coordinates {(8, 68.5)};
+                \addplot[soda bar] coordinates {(9, 71.7)};
+            \end{axis}
+        \end{tikzpicture}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \begin{tikzpicture}
+            \begin{axis}[multiplot style, title={(d) TerraIncognita}, ymin=47, ymax=55]
+                \addplot[erm bar] coordinates {(1, 47.8)};
+                \addplot[mldg bar] coordinates {(2, 47.7)};
+                \addplot[gsam bar] coordinates {(3, 47.0)};
+                \addplot[miro bar] coordinates {(4, 50.4)};
+                \addplot[madg bar] coordinates {(5, 53.7)};
+                \addplot[sagm bar] coordinates {(6, 48.8)};
+                \addplot[ddn bar] coordinates {(7, 50.4)};
+                \addplot[gga bar] coordinates {(8, 50.6)};
+                \addplot[soda bar] coordinates {(9, 49.8)};
+            \end{axis}
+        \end{tikzpicture}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \begin{tikzpicture}
+            \begin{axis}[multiplot style, title={(e) DomainNet}, ymin=39, ymax=48]
+                \addplot[erm bar] coordinates {(1, 44.0)};
+                \addplot[mldg bar] coordinates {(2, 41.2)};
+                \addplot[gsam bar] coordinates {(3, 44.6)};
+                \addplot[miro bar] coordinates {(4, 44.3)};
+                \addplot[madg bar] coordinates {(5, 39.9)};
+                \addplot[sagm bar] coordinates {(6, 45.0)};
+                \addplot[ddn bar] coordinates {(7, 43.4)};
+                \addplot[gga bar] coordinates {(8, 45.2)};
+                \addplot[soda bar] coordinates {(9, 45.9)};
+            \end{axis}
+        \end{tikzpicture}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \begin{tikzpicture}
+            \begin{axis}[multiplot style, title={(f) \textbf{Average}}, ymin=63, ymax=68]
+                \addplot[erm bar] coordinates {(1, 64.2)};
+                \addplot[mldg bar] coordinates {(2, 63.6)};
+                \addplot[gsam bar] coordinates {(3, 65.1)};
+                \addplot[miro bar] coordinates {(4, 65.9)};
+                \addplot[madg bar] coordinates {(5, 66.0)};
+                \addplot[sagm bar] coordinates {(6, 66.1)};
+                \addplot[ddn bar] coordinates {(7, 66.2)};
+                \addplot[gga bar] coordinates {(8, 66.3)};
+                \addplot[soda bar] coordinates {(9, 66.5)};
+            \end{axis}
+        \end{tikzpicture}
+    \end{subfigure}
+    \hfill
+    % --- Shared Legend at the bottom ---
+    \begin{tikzpicture}
+        \begin{axis}[
+            hide axis,
+            xmin=0, xmax=9,
+            ymin=0, ymax=1,
+            legend style={
+                draw=none, /pgfplots/legend image code/.code={\draw[##1] (0cm,-0.1cm) rectangle (0.2cm,0.1cm);},
+                at={(0.5,0.5)}, anchor=north, legend columns=9, font=\tiny
+            }
+        ]
+        \addlegendimage{erm bar} \addlegendentry{ERM}
+        \addlegendimage{mldg bar} \addlegendentry{MLDG}
+        \addlegendimage{gsam bar} \addlegendentry{GSAM}
+        \addlegendimage{miro bar} \addlegendentry{MIRO}
+        \addlegendimage{madg bar} \addlegendentry{MADG}
+        \addlegendimage{sagm bar} \addlegendentry{SAGM}
+        \addlegendimage{ddn bar} \addlegendentry{DDN}
+        \addlegendimage{gga bar} \addlegendentry{GGA}
+        \addlegendimage{soda bar} \addlegendentry{\textbf{SODA}}
+        \end{axis}
+    \end{tikzpicture}
+
+    \caption{Detailed performance comparison on five real-world benchmarks and the average accuracy. SODA consistently achieves competitive or state-of-the-art results across a wide range of datasets, culminating in the highest overall average performance.}
+    \label{fig:all_results_subplots_colored}
+\end{figure*}

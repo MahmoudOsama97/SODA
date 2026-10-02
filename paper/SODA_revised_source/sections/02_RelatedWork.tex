@@ -1,0 +1,91 @@
+\section{Related Work}
+\label{sec:related_work}
+
+This section reviews the literature on Domain Generalization (DG), situating our work within the broader research landscape. We first provide an overview of major DG paradigms, then examine domain alignment methods. We critically analyze the use of Optimal Transport for this task, identifying the pivot instability problem that motivates our work. Finally, we compare stability mechanisms across representation learning contexts to clarify the distinct role of our Dynamic Feature Reservoir.
+
+\subsection{Major Paradigms in Domain Generalization}
+
+The pursuit of generalizable models has given rise to several research paradigms, each with distinct strengths and limitations.
+
+\textbf{Data Augmentation.} These methods enrich training data with samples from synthetic domains, exposing the model to a wider range of variations. Approaches range from feature-level style randomization such as MixStyle~\citep{zhou2021mixstyle} to frequency-domain perturbations~\citep{xu2021fourier}. While effective at increasing diversity, synthesized data may not accurately represent true unseen target distributions, potentially introducing artifacts that do not aid generalization.
+
+\textbf{Disentangled Representation Learning.} These methods explicitly separate a feature vector $z$ into a domain-invariant component $z_{inv}$ and a domain-specific component $z_{spec}$, such that $z = [z_{inv}, z_{spec}]$. The domain-invariant part captures semantic content required for the primary task, while the domain-specific part captures stylistic factors unique to each domain~\citep{bui2021exploiting, peng2019domain, ilse2020diva}. While conceptually elegant, these methods require carefully designed encoder-decoder architectures and can be sensitive to hyperparameter tuning. Ensuring that semantic information does not leak into the domain-specific component remains challenging.
+
+\textbf{Invariant Risk Minimization.} IRM~\citep{arjovsky2019invariant} formalizes DG by seeking representations under which the optimal classifier is identical across all training domains. The objective learns a feature extractor $f_\theta$ such that a single classifier $C_\psi$ is simultaneously optimal for all environments $e \in \mathcal{E}_{tr}$:
+\begin{equation}
+    \min_{\theta, \psi} \sum_{e \in \mathcal{E}_{tr}} R_e(C_\psi \circ f_\theta) \quad \text{subject to} \quad C_\psi \in \underset{\bar{C}_{\bar{\psi}}}{\text{argmin}} \ R_e(\bar{C}_{\bar{\psi}} \circ f_\theta) \ \forall e \in \mathcal{E}_{tr},
+\end{equation}
+where $R_e$ is the expected loss over environment $e$. Despite its theoretical soundness, practical optimization of IRM has proven difficult, and performance can be sensitive to training environment diversity~\citep{gulrajani2020search}.
+
+\textbf{Meta-Learning.} These methods recast DG as learning to learn by simulating domain shift during training through virtual training and testing splits. Some approaches learn explicit regularization functions that improve generalization~\citep{balaji2018metareg}, while others meta-learn models robust to domain-specific feature statistics~\citep{dou2019meta_invariant}.
+
+\textbf{Optimization-Based Methods.} Recent methods regularize training dynamics to promote robustness. Sharpness-Aware Minimization (SAM)~\citep{foret2021sharpness} and its DG variants such as GSAM~\citep{zhuang2022surrogate} seek parameters in flat loss landscape minima, which correlate with better generalization. Gradient matching methods enforce invariance by minimizing gradient variance or maximizing gradient similarity across domains~\citep{shi2022gradient, rame2022fishr}. Arithmetic Meta-Learning~\citep{Wang2025BalancedDF} proposes balanced gradient update directions, while Gradient-Guided Annealing~\citep{gga2025} introduces search mechanisms to escape local minima.
+
+These optimization-based methods achieve robustness by regularizing the loss landscape or gradient properties. Our work takes a complementary approach, focusing on the geometric structure of the feature space itself. We contend that stable geometric alignment between feature manifolds provides a distinct form of invariance that can be combined with optimization-based advances. As shown in Table~\ref{tab:real_results}, stabilizing the alignment pivot yields performance competitive with or superior to complex optimization strategies.
+
+\subsection{Domain Alignment for Invariant Representation Learning}
+
+Domain alignment methods learn a feature extractor $f_\theta$ that maps inputs from any source domain $\mathcal{D}_i$ into a common feature space $\mathcal{Z}$, such that feature distributions $P(f_\theta(x) | x \in \mathcal{D}_i)$ become indistinguishable across domains.
+
+\begin{sloppypar} 
+\textbf{Adversarial Alignment.} Domain-Adversarial Neural Networks (DANN)~\citep{ganin2016domain} employ a minimax game between a feature extractor $f_\theta$, a task classifier $C_\psi$, and a domain discriminator $g_\phi$. The feature extractor minimizes classification loss while maximizing domain confusion through a gradient reversal layer:
+\begin{equation}
+    \min_{\theta, \psi} \max_{\phi} \quad \mathcal{L}_{\text{cls}}(C_\psi(f_\theta(x)), y) - \lambda \mathcal{L}_{\text{adv}}(g_\phi(f_\theta(x)), d).
+\end{equation}
+While powerful, this adversarial dynamic often leads to unstable training and mode collapse, making it challenging to tune effectively.
+\end{sloppypar} 
+
+\textbf{Statistical Discrepancy Minimization.} Maximum Mean Discrepancy (MMD)~\citep{gretton2012kernel, li2018domain_mmd} measures the distance between mean embeddings of domain distributions in a Reproducing Kernel Hilbert Space (RKHS):
+\begin{equation}
+    \mathcal{L}_{\text{MMD}}^2(\mathcal{D}_i, \mathcal{D}_j) = \left\| \mathbb{E}_{x_i \sim \mathcal{D}_i}[\phi(f_\theta(x_i))] - \mathbb{E}_{x_j \sim \mathcal{D}_j}[\phi(f_\theta(x_j))] \right\|_{\mathcal{H}}^2,
+\end{equation}
+where $\phi(\cdot)$ is the feature map to RKHS $\mathcal{H}$ induced by a chosen kernel. The effectiveness of MMD-based methods depends critically on kernel selection and hyperparameters, which can limit practical performance.
+
+\textbf{Other Approaches.} Additional paradigms include probabilistic methods that learn domain density transformations to map source densities to a shared latent density~\citep{gong2016domain}, and knowledge distillation approaches where a student model learns domain-invariant representations by mimicking a robust pre-trained teacher~\citep{niu2024knowledge}. These methods tackle DG through probabilistic or information-theoretic perspectives. Our work complements this literature by pursuing a geometric perspective, arguing that directly aligning feature manifolds via geometric distance offers a more direct mechanism when distributions are complex and non-overlapping.
+
+\subsection{Optimal Transport for Domain Generalization}
+
+The limitations of statistical metrics have motivated adopting Optimal Transport (OT) as a geometric alternative for distribution alignment. First formalized by Monge and relaxed by Kantorovich, OT theory provides a principled framework for comparing probability measures~\citep{villani2009optimal}. For distributions $\mu$ and $\nu$, the $p$-Wasserstein distance is the cost of the optimal transport plan transforming $\mu$ into $\nu$:
+\begin{equation}
+    W_p(\mu, \nu) = \left( \inf_{\pi \in \Pi(\mu, \nu)} \int_{\mathcal{Z} \times \mathcal{Z}} \underbrace{c(z_1, z_2)^p}_{\text{Cost per unit}} \cdot \underbrace{d\pi(z_1, z_2)}_{\text{Mass moved}} \right)^{1/p},
+\end{equation}
+where $\Pi(\mu, \nu)$ is the set of valid transport plans with marginals $\mu$ and $\nu$, and $c(z_1, z_2)$ is typically the Euclidean distance. A key advantage of Wasserstein distance is its ability to compare distributions even when their supports do not overlap, where metrics like MMD may fail. While direct computation is prohibitive, entropic regularization solved via the Sinkhorn algorithm~\citep{cuturi2013sinkhorn} provides a fast, differentiable approximation suitable for deep learning~\citep{peyre2019computational}.
+
+Several works have applied OT to DG, validating its potential without addressing pivot stability. HFedATM~\citep{wang2021hfedatm} uses OT in federated DG but relies on regularized mean aggregation of client models, which still constitutes a batch-dependent, low-capacity target. Zhou et al.~\citep{zhou2021domain} combine OT with metric similarity learning, but alignment is performed pairwise between domains or against batch-derived targets, inheriting potential instability. Works exploring OT for distributional robustness~\citep{gao2023optimal} focus on theoretical robustness guarantees rather than practical challenges of creating stable targets for multi-source DG. These works validate OT's potential but do not address the unstable optimization caused by fluctuating alignment targets. This \textit{pivot instability} represents a fundamental barrier to effectively leveraging OT for domain generalization, which our work directly addresses.
+
+\subsection{Stability Mechanisms in Representation Learning}
+\label{sec:stability_mechanisms}
+
+Our Dynamic Feature Reservoir draws inspiration from momentum and memory mechanisms that create stability in other representation learning contexts. However, as we detail below, the DFR serves a fundamentally different mathematical role.
+
+\textbf{Mean Teacher}~\citep{tarvainen2017mean} improves semi-supervised learning by maintaining a momentum-updated teacher model that provides consistent pseudo-labels for unlabeled data, creating stability in \textit{parameter space}.
+
+\textbf{Momentum Contrast (MoCo)}~\citep{he2020momentum} uses a FIFO queue of feature vectors as a large, stable set of negative samples for \textit{contrastive learning} in self-supervised settings.
+\begin{sloppypar} 
+\textbf{SODA (Ours)} employs the Dynamic Feature Reservoir as a \textit{non-parametric density estimator} for the target distribution in Wasserstein space, enabling geometric alignment against a high-capacity pivot.
+\end{sloppypar} 
+Table~\ref{tab:queue_comparison} summarizes the key distinctions between these mechanisms.
+
+\begin{table}[t]
+\caption{Comparison of memory queue mechanisms across learning paradigms. The DFR serves a fundamentally different mathematical role as a distributional target for geometric alignment rather than a source of contrastive negatives or parameter averaging.}
+\begin{adjustbox}{width=1.0\textwidth}
+
+\label{tab:queue_comparison}
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Aspect} & \textbf{MoCo} & \textbf{Mean Teacher} & \textbf{SODA (Ours)} \\
+\midrule
+Memory contents & Features & Parameters & Features \\
+Memory purpose & Negative samples & Pseudo-labels & Distribution estimate \\
+Loss function & InfoNCE (contrastive) & Consistency & Sinkhorn (geometric) \\
+Mathematical role & Softmax denominator & Teacher network & Monte Carlo estimator \\
+Stability target & Instance discrimination & Label consistency & Transport plan \\
+Requires momentum encoder & Yes & Yes & No \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+The critical distinction lies in mathematical role. In MoCo, the queue provides negative samples to stabilize the InfoNCE loss denominator for instance discrimination. In Mean Teacher, momentum is applied to network parameters to generate stable pseudo-labels. In SODA, the queue serves as a Monte Carlo estimator for the target distribution in Wasserstein space. This enables computing transport plans against a sample size $K$ substantially larger than the mini-batch size $B$, circumventing the sample complexity limitations inherent in high-dimensional distribution matching~\citep{dong2020how}. The queue does not participate in any contrastive or consistency objective; it defines the geometric alignment target itself. To our knowledge, SODA is the first framework to employ a memory queue specifically to create a stable, non-parametric distributional target for geometric domain alignment.
